@@ -35,12 +35,19 @@ Both reports: weather, progress summary, delays, **materials used**, **equipment
 - Daily adds crew consist and work hours (superintendent, foreman / inspector, operator, laborer).
 - Callout adds the work order number, time the call was received, time arrived onsite, and name / hours for each class.
 
+## Using the app
+
+- **Save** is on every step (reports also save as you type). **Home**, or tapping the STX logo, goes back to the home screen; the report stays in Drafts.
+- Last step: **Download PDF** keeps a copy, **Share PDF** sends just the PDF (photos are already inside it) to Mail, Messages and so on. Both need the print name and signature.
+
 ## Monthly callout billing
 
 Fairburn callouts bill by the month. **Home > Callout billing** keeps a running billing for each month, and a callout's Send step shows which month it went on.
 
-- **A callout is added to its month as soon as its report is finished**: the PDF is shared, saved, or the report is marked sent. Unfinished drafts are listed but left off.
+- **A callout is added to its month as soon as its report is finished**: the PDF is downloaded or shared, or the report is marked sent. Unfinished drafts are listed but left off.
+- **Callouts from other people**: every callout PDF carries its billing details (not the photos or signature) in the PDF's keywords. Whoever does the billing saves the PDFs the crew sent to Files and taps **Add callout PDFs**. Each lands on its month, marked "added from PDF", with a Remove button. The same callout is never added twice; a newer copy of it replaces the older one. PDFs from before this version, or PDFs edited or re-saved by another app, can't be read.
 - Each month shows the callout dates, man-hours and equipment hours so far, and its state: **Open** (current month, "Export so far"), **Ready to export** (month is over, "Month complete · export"), or **Exported** with the date. If a callout is added or edited after an export, the month says so and offers "Export updated sheet".
+- After export: **Share billing sheet** (Mail, Save to Files), **Open billing sheet** (shows it on screen with its own share button), or **Download billing sheet**.
 - Export fills the office **TIME AND MATERIALS SUMMARY** billing sheet and names it the office way: `26002_BILLING_SHEET_261005.xlsx` (project, then the export date). The job number is `project-workorder` (`26002-009`), taken from the month's callouts.
 - **The billing sheet is not in this repo, and must not be added to it.** It holds STX billing rates and this repo is public. Each phone loads the `.xlsx` once (Load billing sheet); it is kept in that phone's storage. Any filled copy works: the fill-in cells are overwritten, and rates, formulas, formatting, logo and sheet protection are left as they are. The older 2025 sheet layout is refused with a message to load the updated one.
 - What gets filled: job number, a date and work-detail note per callout day (the progress summary, in capitals like the office sheet), the date and hours on each labor line, equipment hours, and material lines (date, description, quantity, unit).
@@ -48,7 +55,7 @@ Fairburn callouts bill by the month. **Home > Callout billing** keeps a running 
 - Equipment: each equipment name in the app maps to one sheet column (`EQUIPMENT` in `docs/app.js`). A written-in machine that is not on the rate sheet is flagged and noted in that day's work detail.
 - Left for the office: material unit rates, travel / per diem, lump-sum, other services and adjustments.
 - The sheet has 7 date lines and 10 material lines. A month with more rolls into a second file (`..._261005-2.xlsx`).
-- Only callouts stored on the phone that exports are included.
+- The export includes the callouts on that phone plus any added from PDFs.
 - If the sheet layout changes (rows or columns move), update `BILLING` at the top of `docs/billing.js` and `EQUIPMENT` in `docs/app.js`.
 
 ## Page breaks
@@ -77,8 +84,8 @@ Static site, no build step. Everything the phone loads is in `docs/`.
 - Questions, project numbers and the site address are constants at the top of `docs/app.js` (`DELAYS`, `SAFETY`, `TYPES`, `SITE`, `EQUIP_PRESETS`, `MATERIAL_UOM`).
 - The PDF layout is `buildPdf()` in `docs/app.js`.
 - The app works offline through `docs/sw.js`, which caches files under a version name. **After any change, bump the version in both places or phones keep the old copy:**
-  - `const CACHE = "stx-fairburn-v3"` in `docs/sw.js` (and the `?v=3` lines in its list)
-  - the `?v=3` on `app.js` and `billing.js` in `docs/index.html`
+  - `const CACHE = "stx-fairburn-v4"` in `docs/sw.js` (and the `?v=4` lines in its list)
+  - the `?v=4` on `app.js` and `billing.js` in `docs/index.html`
 
 ## Files
 

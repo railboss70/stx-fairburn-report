@@ -394,8 +394,9 @@ function answer(r, id) {
   return r.q[id];
 }
 
+/* The STX logo doubles as the way back to the home screen. */
 function markSvg() {
-  return '<div class="logo-chip"><img src="./stx-logo.png" alt="STX Corporation" /></div>';
+  return '<button type="button" class="logo-chip" data-act="home" aria-label="Home"><img src="./stx-logo.png" alt="STX Corporation" /></button>';
 }
 function field(label, inner) {
   return "<label>" + label + "</label>" + inner;
@@ -440,7 +441,7 @@ function render() {
   teardownSig();
   const app = document.getElementById("app");
   if (!app) return;
-  app.innerHTML = screen === "home" ? homeHtml() : wizardHtml();
+  app.innerHTML = screen === "home" ? homeHtml() : screen === "billing" ? billingScreenHtml() : wizardHtml();
   bind();
   if (focusId) {
     const next = document.getElementById(focusId);
@@ -480,7 +481,7 @@ function retitle() {
 }
 
 function homeHtml() {
-  const items = list();
+  const items = list().filter((r) => !r.imported);
   const today = todayISO();
   const drafts = items.filter((r) => r.status === "draft");
   const sent = items.filter((r) => r.status === "sent");
@@ -505,6 +506,7 @@ function homeHtml() {
     '<button class="btn ' + (todayDaily ? "btn-outline" : "btn-navy") + '" data-act="new-daily">Start a daily report</button>' +
     '<button class="btn btn-gold" data-act="new-callout">Start a callout report</button>' +
     (lastDaily ? '<button class="btn btn-outline" data-act="fromlast">New daily from last crew</button>' : "") +
+    '<button class="btn btn-outline" data-act="billing">Callout billing</button>' +
     '<div style="height:14px"></div>' +
     group("Drafts", drafts, "No drafts. Start a report for the shift.") +
     group("Sent", sent, "Sent reports land here after you share them.") +
@@ -514,7 +516,7 @@ function homeHtml() {
     '<p class="hint">The office files reports as project- YYMMDD name. Leave blank to use your first name.</p>' +
     field("Send reports to", '<input id="set-defaultEmail" type="email" inputmode="email" data-set="defaultEmail" value="' + esc(s.defaultEmail) + '" placeholder="' + DEFAULT_EMAIL + '" />') +
     field("Photos in the PDF", '<select id="set-photosPerPage" data-set="photosPerPage"><option value="1"' + (Number(s.photosPerPage) !== 2 ? " selected" : "") + '>One per page (best for paperwork)</option><option value="2"' + (Number(s.photosPerPage) === 2 ? " selected" : "") + ">Two per page</option></select>") +
-    "</div>" + billingHomeHtml() + "</main>";
+    "</div></main>";
 }
 
 function wizardHtml() {
@@ -522,17 +524,19 @@ function wizardHtml() {
   if (!r) return homeHtml();
   const names = stepNames(r);
   return '<header class="hero" style="padding-bottom:14px"><div class="brand">' + markSvg() +
-    "<div><small>" + esc(typeOf(r).label) + "</small></div></div>" +
+    "<div><small>" + esc(typeOf(r).label) + "</small></div>" +
+    '<button type="button" class="homebtn" data-act="home">Home</button></div>' +
     '<div class="muted" style="color:rgba(255,252,245,.75);margin-top:8px">' + names[step] + " · " + (step + 1) + " of " + STEP_COUNT + "</div></header>" +
     '<main class="content">' +
     '<div class="steps">' + names.map((label, i) =>
       '<button type="button" data-step="' + i + '" aria-label="' + esc(label) + '"><i class="' + (i <= step ? "on" : "") + '"></i></button>'
     ).join("") + "</div>" +
     stepHtml(r) +
-    '<div class="nav"><button class="btn btn-ghost" data-act="' + (step === 0 ? "home" : "back") + '">' + (step === 0 ? "Home" : "Back") + "</button>" +
+    '<div class="nav three"><button class="btn btn-ghost" data-act="' + (step === 0 ? "home" : "back") + '">' + (step === 0 ? "Home" : "Back") + "</button>" +
+    '<button class="btn btn-outline" data-act="save">Save</button>' +
     (step < STEP_COUNT - 1
       ? '<button class="btn btn-navy" data-act="next">Next</button>'
-      : '<button class="btn btn-gold" data-act="send" disabled>Preparing…</button>') +
+      : '<button class="btn btn-navy" data-act="done">Done</button>') +
     "</div></main>";
 }
 
@@ -991,11 +995,10 @@ function stepHtml(r) {
     "<label>Signature</label>" +
     '<canvas class="sig" id="sig"></canvas>' +
     '<button class="btn btn-ghost" data-act="clearsig">Clear signature</button></div>' +
-    '<div class="card">' +
-    '<p class="hint">Share the PDF (and photos) to Mail so it lands at the office. On iPhone use the Mail app, not a browser tab.</p>' +
-    '<button class="btn btn-outline" data-act="preview">Preview PDF</button>' +
-    '<button class="btn btn-gold" data-act="send" data-share="1" disabled>Preparing…</button>' +
-    '<button class="btn btn-ghost" data-act="pdf">Download PDF only</button></div>' +
+    '<div class="card"><h2>Send the report</h2>' +
+    '<p class="hint">Download the PDF to keep a copy, then Share it to Mail (or Messages) to send it to the office. Photos are already inside the PDF.</p>' +
+    '<button class="btn btn-gold" data-act="pdf" disabled>Preparing PDF…</button>' +
+    '<button class="btn btn-navy" data-act="send" disabled>Preparing PDF…</button></div>' +
     (r.type === "callout" ? billingSendHtml(r) : "") +
     (askSent
       ? '<div class="card"><h2>Did the email go out?</h2>' +
@@ -1105,20 +1108,32 @@ function monthState(g) {
   return { tag: "Open", cls: "", button: "Export so far" };
 }
 
+function calloutLine(r) {
+  const d = collectBilling([r]);
+  return '<div class="list-row" style="padding:7px 0"><div><b>' + esc(shortDate(r.date)) + "</b> · " + esc(r.printName || "No name") +
+    '<div class="muted">' + d.manHours + " man-hrs · " + d.equipHours + " equip hrs" + (r.imported ? " · added from PDF" : " · this phone") + "</div></div>" +
+    (r.imported ? '<button class="btn btn-danger" style="width:auto;margin:0;padding:6px 10px;font-size:12px" data-unimport="' + esc(r.id) + '">Remove</button>' : "") +
+    "</div>";
+}
+
 function billingMonthHtml(g) {
   const st = monthState(g);
   const busy = billBusy === g.key;
+  const ready = typeof billingTemplateCurrent === "function" && billingTemplateCurrent();
   return '<div class="item"><div class="item-top"><b>' + esc(monthLabel(g.month)) + '</b><span class="tag' + st.cls + '">' + esc(st.tag) + "</span></div>" +
     '<div class="muted">Job ' + esc(g.project + "-" + monthWorkOrder(g)) + " · " + (g.done.length ? esc(monthStats(g)) : "nothing finished yet") + "</div>" +
-    (g.done.length ? '<div class="muted" style="margin-top:4px">' + esc(g.done.map((r) => shortDate(r.date)).join(", ")) + "</div>" : "") +
+    (g.done.length ? '<div style="margin-top:6px">' + g.done.map(calloutLine).join("") + "</div>" : "") +
     (g.drafts.length ? '<p class="hint" style="margin:6px 0 0">' + g.drafts.length + " callout" + (g.drafts.length === 1 ? "" : "s") + " (" + esc(g.drafts.map((r) => shortDate(r.date)).join(", ")) +
-      ") not finished. Share or save the report and it is added.</p>" : "") +
+      ") not finished. Download or share the report and it is added.</p>" : "") +
     (g.changed ? '<p class="hint" style="margin:6px 0 0"><b>Callouts were added or changed since the last export.</b></p>' : "") +
-    (g.done.length ? '<button class="btn btn-navy" data-bill="' + esc(g.key) + '"' + (billBusy ? " disabled" : "") + ">" + (busy ? "Building…" : esc(st.button)) + "</button>" : "") +
+    (g.done.length
+      ? (ready
+        ? '<button class="btn btn-navy" data-bill="' + esc(g.key) + '"' + (billBusy ? " disabled" : "") + ">" + (busy ? "Building…" : esc(st.button)) + "</button>"
+        : '<p class="hint" style="margin:8px 0 0"><b>Load the billing sheet above to export.</b></p>')
+      : "") +
     "</div>" + billingResultHtml(g);
 }
 
-/* A built sheet is only offered while it still matches the month: a callout finished or edited since makes it stale. */
 function billingResultHtml(g) {
   const b = billResult;
   if (!b || b.key !== g.key) return "";
@@ -1128,30 +1143,114 @@ function billingResultHtml(g) {
     b.files.map((f) => '<span class="filetag">' + esc(f.name) + "</span>").join("") +
     '<p class="hint">Filled in: ' + esc(b.summary) + ".</p>" +
     (b.warnings.length ? '<p class="hint"><b>Check before it goes out</b></p><ul class="hint" style="margin:0 0 10px;padding-left:18px">' + b.warnings.map((w) => "<li>" + esc(w) + "</li>").join("") + "</ul>" : "") +
+    '<p class="hint">Share sends it to Mail or Save to Files. Open shows it on screen, with its own share button.</p>' +
     '<button class="btn btn-gold" data-act="billshare">Share billing sheet</button>' +
+    '<button class="btn btn-outline" data-act="billopen">Open billing sheet</button>' +
     '<button class="btn btn-ghost" data-act="billsave">Download billing sheet</button></div>';
 }
 
-function billingHomeHtml() {
+let importNote = "";
+
+function billingScreenHtml() {
   const months = typeof billingMonths === "function" ? billingMonths() : [];
-  return '<div class="card"><h2>Callout billing</h2>' +
-    '<p class="hint">Fairburn callouts bill by the month. Each finished callout report is added to its month. When the month is done, export the billing sheet.</p>' +
-    billingTemplateHtml() +
-    (months.length ? '<div style="margin-top:12px">' + months.slice(0, 6).map(billingMonthHtml).join("") + "</div>"
-      : '<p class="empty" style="margin-top:12px">Finished callout reports show up here by month.</p>') +
-    "</div>";
+  return '<header class="hero" style="padding-bottom:14px"><div class="brand">' + markSvg() +
+    "<div><small>Callout billing</small></div>" +
+    '<button type="button" class="homebtn" data-act="home">Home</button></div>' +
+    '<div class="muted" style="color:rgba(255,252,245,.75);margin-top:8px">Billed by the month · CSX Fairburn</div></header>' +
+    '<main class="content">' +
+    '<div class="card"><h2>Billing sheet</h2>' + billingTemplateHtml() + "</div>" +
+    '<div class="card"><h2>Add callouts from the crew</h2>' +
+    '<p class="hint">Every callout PDF made with this app carries its billing details. When someone else ran a callout, save the PDF they sent you to Files, then add it here. It lands on the right month, and the same callout is never added twice.</p>' +
+    '<input id="importPdf" type="file" accept="application/pdf,.pdf" multiple hidden />' +
+    '<button class="btn btn-outline" data-act="importpdf">Add callout PDFs</button>' +
+    (importNote ? '<p class="hint" style="margin-top:10px">' + importNote + "</p>" : "") + "</div>" +
+    '<div class="card"><h2>Months</h2>' +
+    '<p class="hint">Each finished callout is added to its month. When the month is done, export the billing sheet.</p>' +
+    (months.length ? months.slice(0, 8).map(billingMonthHtml).join("") : '<p class="empty">Finished callout reports show up here by month.</p>') +
+    "</div>" +
+    '<div class="nav"><button class="btn btn-ghost" data-act="home">Home</button><span></span></div></main>';
 }
 
 function billingSendHtml(r) {
-  const key = String(r.projectNumber || "").trim() + "|" + String(r.date || "").slice(0, 7);
-  const g = (typeof billingMonths === "function" ? billingMonths() : []).find((x) => x.key === key);
   const label = monthLabel(String(r.date || "").slice(0, 7));
   const finished = reportFinished(r);
   return '<div class="card"><h2>' + esc(label) + " billing</h2>" +
     (finished
-      ? '<p class="hint"><b>This callout is on the ' + esc(label) + " billing.</b> " + (g ? g.done.length + " finished callout report" + (g.done.length === 1 ? "" : "s") + " so far this month." : "") + "</p>"
-      : '<p class="hint">This callout goes on the ' + esc(label) + " billing as soon as you share or save the report above.</p>") +
-    (g ? billingMonthHtml(g) : "") + "</div>";
+      ? '<p class="hint"><b>This callout is on the ' + esc(label) + " billing.</b></p>"
+      : '<p class="hint">This callout goes on the ' + esc(label) + " billing as soon as you download or share the PDF.</p>") +
+    '<button class="btn btn-ghost" data-act="billing">Open callout billing</button></div>';
+}
+
+/* ---------- callouts from other phones, carried inside their PDFs ---------- */
+async function readCalloutPdf(file) {
+  const buf = new Uint8Array(await file.arrayBuffer());
+  let text = "";
+  for (let i = 0; i < buf.length; i += 8192) text += String.fromCharCode.apply(null, buf.subarray(i, i + 8192));
+  const m = text.match(/\/Keywords \(STXFB1:([A-Za-z0-9+\/=]+)\)/);
+  if (!m) return null;
+  const bin = atob(m[1]);
+  const bytes = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i += 1) bytes[i] = bin.charCodeAt(i);
+  return JSON.parse(new TextDecoder().decode(bytes));
+}
+
+async function onImportPdfs(e) {
+  const files = Array.prototype.slice.call(e.target.files || []);
+  e.target.value = "";
+  if (!files.length) return;
+  const out = { added: [], updated: [], same: 0, own: 0, daily: 0, bad: [] };
+  for (let i = 0; i < files.length; i += 1) {
+    const f = files[i];
+    let d = null;
+    try { d = await readCalloutPdf(f); } catch (err) { d = null; }
+    if (!d || !d.id || !d.date) { out.bad.push(f.name); continue; }
+    if (d.type !== "callout") { out.daily += 1; continue; }
+    const have = store.reports[d.id];
+    if (have && !have.imported) { out.own += 1; continue; }
+    if (have && String(have.updatedAt || "") >= String(d.updatedAt || "")) { out.same += 1; continue; }
+    const now = new Date().toISOString();
+    const r = blankReport(store.settings, "callout");
+    Object.assign(r, {
+      id: d.id, date: d.date, projectNumber: d.projectNumber || "", projectName: d.projectName || "", calloutNo: d.calloutNo || "",
+      printName: d.printName || "", fileWho: d.fileWho || "", summary: d.summary || "", q: d.q || {},
+      equipment: d.equipment || [], materials: d.materials || [], createdAt: d.createdAt || now, updatedAt: d.updatedAt || now,
+      status: "sent", sentAt: now, finishedAt: now, imported: true, importedFrom: f.name, photos: [], signatureDataUrl: "",
+    });
+    fillReport(r);
+    store.reports[r.id] = r;
+    if (!have) store.order.push(r.id);
+    (have ? out.updated : out.added).push(shortDate(r.date) + " " + (r.printName || ""));
+  }
+  save();
+  const parts = [];
+  if (out.added.length) parts.push("<b>Added " + out.added.length + ":</b> " + esc(out.added.join(", ")) + ".");
+  if (out.updated.length) parts.push("<b>Updated " + out.updated.length + ":</b> " + esc(out.updated.join(", ")) + ".");
+  if (out.same) parts.push(out.same + " already added.");
+  if (out.own) parts.push(out.own + " already on this phone.");
+  if (out.daily) parts.push(out.daily + " daily report" + (out.daily === 1 ? "" : "s") + " skipped (only callouts are billed).");
+  if (out.bad.length) parts.push("<b>Could not read " + out.bad.length + ":</b> " + esc(out.bad.join(", ")) + ". Only callout PDFs made by this app (from this version on) can be added, and they must not be edited or re-saved by another app.");
+  importNote = parts.join(" ");
+  render();
+}
+
+function removeImported(id) {
+  const r = store.reports[id];
+  if (!r || !r.imported) return;
+  delete store.reports[id];
+  store.order = store.order.filter((x) => x !== id);
+  save();
+  toast("Removed. Add the PDF again if you need it back.");
+  render();
+}
+
+function openBillingFile() {
+  if (!billResult) return;
+  const f = billResult.files[0];
+  const url = URL.createObjectURL(f.blob);
+  const w = window.open(url, "_blank");
+  if (!w) { toast("This phone blocked opening it. Use Share billing sheet instead."); return; }
+  recordBillingExport(billResult);
+  setTimeout(() => URL.revokeObjectURL(url), 120000);
 }
 
 async function onBillingFile(e) {
@@ -1333,6 +1432,9 @@ function bind() {
   document.querySelectorAll("[data-bill]").forEach((b) => b.addEventListener("click", () => prepareBilling(b.getAttribute("data-bill"))));
   const billFile = document.getElementById("billingFile");
   if (billFile) billFile.addEventListener("change", onBillingFile);
+  const importFile = document.getElementById("importPdf");
+  if (importFile) importFile.addEventListener("change", onImportPdfs);
+  document.querySelectorAll("[data-unimport]").forEach((b) => b.addEventListener("click", () => removeImported(b.getAttribute("data-unimport"))));
   document.querySelectorAll("[data-qf]").forEach((el) => el.addEventListener("input", () => {
     const r = active();
     const id = el.getAttribute("data-qf");
@@ -1436,7 +1538,23 @@ function onAct(e) {
   if (act === "new-daily") start("daily", false, true);
   if (act === "new-callout") start("callout", false, true);
   if (act === "fromlast") start("daily", true, true);
-  if (act === "home") { askSent = false; screen = "home"; activeId = null; step = 0; render(); window.scrollTo(0, 0); }
+  if (act === "home" || act === "done") {
+    const r = active();
+    if (screen === "wizard" && r) {
+      save();
+      toast(r.status === "draft" ? "Saved. Your report is in Drafts." : "Saved.");
+    }
+    askSent = false; screen = "home"; activeId = null; step = 0; render(); window.scrollTo(0, 0);
+  }
+  if (act === "save") {
+    const r = active();
+    if (r) { r.updatedAt = new Date().toISOString(); save(); }
+    const t = new Date();
+    toast("Saved at " + time12(t.getHours() + ":" + z2(t.getMinutes())) + (r && r.status === "draft" ? ". It stays in Drafts until you send it." : "."));
+  }
+  if (act === "billing") { askSent = false; screen = "billing"; activeId = null; step = 0; render(); window.scrollTo(0, 0); }
+  if (act === "importpdf") { const el = document.getElementById("importPdf"); if (el) el.click(); }
+  if (act === "billopen") openBillingFile();
   if (act === "back") { step = Math.max(0, step - 1); render(); window.scrollTo(0, 0); }
   if (act === "next") {
     if (!canNext()) return;
@@ -1456,7 +1574,6 @@ function onAct(e) {
     prepareSendFiles();
   }
   if (act === "pdf") downloadPdf();
-  if (act === "preview") previewPdf();
   if (act === "send") sendReport();
   if (act === "sent-yes") markSent();
   if (act === "sent-no") { askSent = false; render(); }
@@ -1745,6 +1862,18 @@ function reportText(r) {
     block(T.crewTitle, T.crew), block("Safety checklist", T.safety),
     ["", r.photosPurged ? "Photos removed from phone after 14 days (sent copy is on file)." : "Photos: " + r.photos.length]
   ).filter((x, i) => x !== "" || i > 5).join("\n");
+}
+
+function calloutPayload(r) {
+  const data = {
+    v: 1, id: r.id, type: r.type, date: r.date, projectNumber: r.projectNumber, projectName: r.projectName, calloutNo: r.calloutNo,
+    printName: r.printName, fileWho: r.fileWho, summary: r.summary, q: r.q, equipment: r.equipment, materials: r.materials,
+    createdAt: r.createdAt, updatedAt: r.updatedAt,
+  };
+  const bytes = new TextEncoder().encode(JSON.stringify(data));
+  let bin = "";
+  for (let i = 0; i < bytes.length; i += 8192) bin += String.fromCharCode.apply(null, bytes.subarray(i, i + 8192));
+  return btoa(bin);
 }
 
 /* jsPDF's built-in fonts only cover Latin-1, so curly quotes and emoji typed on a phone are swapped or dropped. */
@@ -2257,7 +2386,10 @@ async function buildPdf(r) {
     doc.setFont("helvetica", "bold");
     doc.text(pdfText(title), pageW / 2, pageH - 22, { align: "center" });
   }
-  doc.setProperties({ title: pdfText(title), subject: T.title, author: pdfText(r.printName || ""), creator: "STX Fairburn Report" });
+  const props = { title: pdfText(title), subject: T.title, author: pdfText(r.printName || ""), creator: "STX Fairburn Report" };
+  /* Callout PDFs carry their billing details (no photos or signature) so another phone or the office can add them to the month's billing. */
+  if (r.type === "callout") props.keywords = "STXFB1:" + calloutPayload(r);
+  doc.setProperties(props);
   return doc.output("blob");
 }
 
@@ -2270,38 +2402,25 @@ function downloadBlob(blob, name) {
   a.remove();
 }
 
-async function downloadPdf() {
+function downloadPdf() {
   const r = active();
   if (!r) return;
-  if (!window.jspdf) { toast("PDF library still loading — try again."); return; }
+  if (!String(r.printName || "").trim() || !r.signatureDataUrl) {
+    toast("Print name and signature are required.");
+    return;
+  }
   const pack = preparedFiles;
-  const blob = packMatches(pack, r) ? pack.blob : await buildPdf(r);
-  downloadBlob(blob, fileName(r));
+  if (!packMatches(pack, r)) {
+    toast("Still preparing the PDF.");
+    prepareSendFiles();
+    return;
+  }
+  downloadBlob(pack.blob, fileName(r));
   rememberSettings(r);
   markFinished(r);
   save();
-  toast("Saved " + fileName(r));
-  render();
-}
-
-async function previewPdf() {
-  const r = active();
-  if (!r) return;
-  if (!window.jspdf) { toast("PDF library still loading — try again."); return; }
-  const w = window.open("", "_blank");
-  try {
-    const pack = preparedFiles;
-    const blob = packMatches(pack, r) ? pack.blob : await buildPdf(r);
-    const url = URL.createObjectURL(blob);
-    if (w) w.location = url;
-    else {
-      downloadBlob(blob, fileName(r));
-      toast("Preview blocked. PDF downloaded instead.");
-    }
-  } catch (err) {
-    if (w && w.close) w.close();
-    toast("Could not build the PDF.");
-  }
+  toast("Saved " + fileName(r) + ". Now tap Share PDF to send it.");
+  if (r.type === "callout") render();
 }
 
 function packStamp(r) {
@@ -2313,9 +2432,9 @@ function packMatches(pack, r) {
 }
 
 function setShareBusy(busy) {
-  document.querySelectorAll('[data-act="send"]').forEach((b) => {
+  document.querySelectorAll('[data-act="send"], [data-act="pdf"]').forEach((b) => {
     b.disabled = !!busy;
-    b.textContent = busy ? "Preparing…" : (b.getAttribute("data-share") === "1" ? "Share PDF + photos" : "Send report");
+    b.textContent = busy ? "Preparing PDF…" : (b.getAttribute("data-act") === "pdf" ? "Download PDF" : "Share PDF");
   });
 }
 
@@ -2330,6 +2449,8 @@ function queuePrepare() {
 async function prepareSendFiles() {
   const r = active();
   if (!r || screen !== "wizard" || step !== STEP.SEND) return;
+  /* nothing changed since the last build: keep the ready PDF so Download and Share stay instant */
+  if (packMatches(preparedFiles, r)) { setShareBusy(false); return; }
   if (wxBusy) {
     prepareToken += 1;
     if (preparedFiles) preparedFiles.ready = false;
@@ -2338,7 +2459,7 @@ async function prepareSendFiles() {
   }
   const token = ++prepareToken;
   const stamp = packStamp(r);
-  preparedFiles = { stamp: stamp, ready: false, blob: null, pdfFile: null, photoFiles: [] };
+  preparedFiles = { stamp: stamp, ready: false, blob: null, pdfFile: null };
   setShareBusy(true);
   try {
     if (!window.jspdf) throw new Error("pdf");
@@ -2348,21 +2469,11 @@ async function prepareSendFiles() {
     if (!live || live.id !== r.id || screen !== "wizard" || step !== STEP.SEND) return;
     if (packStamp(live) !== stamp) { prepareSendFiles(); return; }
     const pdfFile = new File([blob], fileName(live), { type: "application/pdf" });
-    const photoFiles = [];
-    const items = live.photos || [];
-    for (let i = 0; i < items.length; i += 1) {
-      if (token !== prepareToken) return;
-      let b = null;
-      try { b = await getPhoto(items[i].id); } catch (e) { b = null; }
-      if (token !== prepareToken) return;
-      if (b) photoFiles.push(new File([b], fileTitle(live) + " photo " + (i + 1) + ".jpg", { type: b.type || "image/jpeg" }));
-    }
-    if (token !== prepareToken) return;
-    preparedFiles = { stamp: stamp, ready: true, blob: blob, pdfFile: pdfFile, photoFiles: photoFiles };
+    preparedFiles = { stamp: stamp, ready: true, blob: blob, pdfFile: pdfFile };
     setShareBusy(false);
   } catch (err) {
     if (token !== prepareToken) return;
-    preparedFiles = { stamp: stamp, ready: false, blob: null, pdfFile: null, photoFiles: [] };
+    preparedFiles = { stamp: stamp, ready: false, blob: null, pdfFile: null };
     setShareBusy(false);
   }
 }
@@ -2402,12 +2513,7 @@ function sendReport() {
   rememberSettings(r);
   save();
   copyP.then((ok) => { if (ok) toast("Office email copied. Paste it in To."); });
-  const files = [pack.pdfFile].concat(pack.photoFiles || []);
-  const payload = {
-    title: mailSubject(r),
-    text: typeOf(r).footer + " for project " + (r.projectNumber || "—") + " on " + r.date + ". Please send to " + email + ".",
-    files: files,
-  };
+  const payload = { title: mailSubject(r), files: [pack.pdfFile] };
   try {
     if (navigator.share && navigator.canShare && navigator.canShare(payload)) {
       navigator.share(payload).then(() => {
