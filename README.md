@@ -38,6 +38,11 @@ Both reports: weather, progress summary, delays, **materials used**, **equipment
 ## Using the app
 
 - **Save** is on every step (reports also save as you type). **Home**, or tapping the STX logo, goes back to the home screen; the report stays in Drafts.
+- **Version** shows at the top of the home screen, so you can tell when phones have picked up an update.
+- **JHA / pre-task safety planner** (Photos step): photograph both pages, drag the corners to the paper edges, and the app straightens it like a scanner ("Scan look" whitens the paper). Both pages print right after the report.
+- **Photo pages**: 1, 2 or 4 photos per page; tap photos to put up to 4 on one page, split them out, or leave one off the report. The home-screen setting is the default for new reports.
+- **PDF stays under 2 MB** so it goes through email; photos are scaled back evenly if needed. The last step shows the page count and size.
+- **Weather** tries up to 5 nearby National Weather Service stations when the closest one is down.
 - Last step: **Download PDF** keeps a copy, **Share PDF** sends just the PDF (photos are already inside it) to Mail, Messages and so on. Both need the print name and signature.
 
 ## Monthly callout billing
@@ -45,6 +50,7 @@ Both reports: weather, progress summary, delays, **materials used**, **equipment
 Fairburn callouts bill by the month. **Home > Callout billing** keeps a running billing for each month, and a callout's Send step shows which month it went on.
 
 - **A callout is added to its month as soon as its report is finished**: the PDF is downloaded or shared, or the report is marked sent. Unfinished drafts are listed but left off.
+- **Dropbox / office computer**: open `https://railboss70.github.io/stx-fairburn-report/#billing` (bookmark it) and drag the callout PDFs, or the whole month's folder, from Dropbox onto the drop box. The billing sheet `.xlsx` can be dropped in too the first time. Daily reports and other PDFs in the folder are skipped. On iPhone, tap the box and use Browse › Dropbox.
 - **Callouts from other people**: every callout PDF carries its billing details (not the photos or signature) in the PDF's keywords. Whoever does the billing saves the PDFs the crew sent to Files and taps **Add callout PDFs**. Each lands on its month, marked "added from PDF", with a Remove button. The same callout is never added twice; a newer copy of it replaces the older one. PDFs from before this version, or PDFs edited or re-saved by another app, can't be read.
 - Each month shows the callout dates, man-hours and equipment hours so far, and its state: **Open** (current month, "Export so far"), **Ready to export** (month is over, "Month complete · export"), or **Exported** with the date. If a callout is added or edited after an export, the month says so and offers "Export updated sheet".
 - After export: **Share billing sheet** (Mail, Save to Files), **Open billing sheet** (shows it on screen with its own share button), or **Download billing sheet**.
@@ -84,8 +90,8 @@ Static site, no build step. Everything the phone loads is in `docs/`.
 - Questions, project numbers and the site address are constants at the top of `docs/app.js` (`DELAYS`, `SAFETY`, `TYPES`, `SITE`, `EQUIP_PRESETS`, `MATERIAL_UOM`).
 - The PDF layout is `buildPdf()` in `docs/app.js`.
 - The app works offline through `docs/sw.js`, which caches files under a version name. **After any change, bump the version in both places or phones keep the old copy:**
-  - `const CACHE = "stx-fairburn-v4"` in `docs/sw.js` (and the `?v=4` lines in its list)
-  - the `?v=4` on `app.js` and `billing.js` in `docs/index.html`
+  - `const CACHE = "stx-fairburn-v5"` in `docs/sw.js` (and the `?v=5` lines in its list)
+  - the `?v=5` on `app.js` and `billing.js` in `docs/index.html`
 
 ## Files
 

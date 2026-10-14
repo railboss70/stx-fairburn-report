@@ -1,11 +1,11 @@
-const CACHE = "stx-fairburn-v4";
+const CACHE = "stx-fairburn-v5";
 const ASSETS = [
   "./",
   "./index.html",
   "./app.js",
-  "./app.js?v=4",
+  "./app.js?v=5",
   "./billing.js",
-  "./billing.js?v=4",
+  "./billing.js?v=5",
   "./jszip.min.js",
   "./jspdf.umd.min.js",
   "./stx-logo.png",
