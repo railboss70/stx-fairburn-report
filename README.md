@@ -51,6 +51,7 @@ Fairburn callouts bill by the month. **Home > Callout billing** keeps a running 
 
 - **A callout is added to its month as soon as its report is finished**: the PDF is downloaded or shared, or the report is marked sent. Unfinished drafts are listed but left off.
 - **Dropbox / office computer**: open `https://railboss70.github.io/stx-fairburn-report/#billing` (bookmark it) and drag the callout PDFs, or the whole month's folder, from Dropbox onto the drop box. The billing sheet `.xlsx` can be dropped in too the first time. Daily reports and other PDFs in the folder are skipped. On iPhone, tap the box and use Browse › Dropbox.
+- **Between the two Fairburn guys (AirDrop)**: each month on the billing screen has **Share my callouts (AirDrop)**. It makes one small PDF listing that phone's finished callouts for the month, with all their billing details inside. AirDrop it to the partner, who saves it to Files and picks it under **Add callouts**; the whole month is added at once and nothing is added twice. Re-send it any time; only new or changed callouts are added.
 - **Callouts from other people**: every callout PDF carries its billing details (not the photos or signature) in the PDF's keywords. Whoever does the billing saves the PDFs the crew sent to Files and taps **Add callout PDFs**. Each lands on its month, marked "added from PDF", with a Remove button. The same callout is never added twice; a newer copy of it replaces the older one. PDFs from before this version, or PDFs edited or re-saved by another app, can't be read.
 - Each month shows the callout dates, man-hours and equipment hours so far, and its state: **Open** (current month, "Export so far"), **Ready to export** (month is over, "Month complete · export"), or **Exported** with the date. If a callout is added or edited after an export, the month says so and offers "Export updated sheet".
 - After export: **Share billing sheet** (Mail, Save to Files), **Open billing sheet** (shows it on screen with its own share button), or **Download billing sheet**.
@@ -90,8 +91,8 @@ Static site, no build step. Everything the phone loads is in `docs/`.
 - Questions, project numbers and the site address are constants at the top of `docs/app.js` (`DELAYS`, `SAFETY`, `TYPES`, `SITE`, `EQUIP_PRESETS`, `MATERIAL_UOM`).
 - The PDF layout is `buildPdf()` in `docs/app.js`.
 - The app works offline through `docs/sw.js`, which caches files under a version name. **After any change, bump the version in both places or phones keep the old copy:**
-  - `const CACHE = "stx-fairburn-v5"` in `docs/sw.js` (and the `?v=5` lines in its list)
-  - the `?v=5` on `app.js` and `billing.js` in `docs/index.html`
+  - `const CACHE = "stx-fairburn-v6"` in `docs/sw.js` (and the `?v=6` lines in its list)
+  - the `?v=6` on `app.js` and `billing.js` in `docs/index.html`
 
 ## Files
 

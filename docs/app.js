@@ -1,7 +1,7 @@
 /* STX Fairburn Report — daily project report and callout report in one app.
    Built as a sibling of stx-daily-summary: same storage, photo, signature, weather and share plumbing. */
 const DEFAULT_EMAIL = "reports@stxrailroad.com";
-const APP_VERSION = "5";
+const APP_VERSION = "6";
 const KEY = "stx-fairburn-v1";
 const DB_NAME = "stx-fairburn";
 const PHOTO_STORE = "photos";
@@ -1152,6 +1152,8 @@ function billingMonthHtml(g) {
     (g.drafts.length ? '<p class="hint" style="margin:6px 0 0">' + g.drafts.length + " callout" + (g.drafts.length === 1 ? "" : "s") + " (" + esc(g.drafts.map((r) => shortDate(r.date)).join(", ")) +
       ") not finished. Download or share the report and it is added.</p>" : "") +
     (g.changed ? '<p class="hint" style="margin:6px 0 0"><b>Callouts were added or changed since the last export.</b></p>' : "") +
+    (g.done.some((r) => !r.imported)
+      ? '<button class="btn btn-outline" data-bundle="' + esc(g.key) + '">Share my callouts (AirDrop)</button>' : "") +
     (g.done.length
       ? (ready
         ? '<button class="btn btn-navy" data-bill="' + esc(g.key) + '"' + (billBusy ? " disabled" : "") + ">" + (busy ? "Building…" : esc(st.button)) + "</button>"
@@ -1185,8 +1187,9 @@ function billingScreenHtml() {
     '<div class="muted" style="color:rgba(255,252,245,.75);margin-top:8px">Billed by the month · CSX Fairburn</div></header>' +
     '<main class="content">' +
     '<div class="card"><h2>Billing sheet</h2>' + billingTemplateHtml() + "</div>" +
-    '<div class="card"><h2>Add callouts from Dropbox</h2>' +
-    '<p class="hint">Every callout PDF made with this app carries its billing details, so the month builds itself from the PDFs already filed in Dropbox.</p>' +
+    '<div class="card"><h2>Add callouts</h2>' +
+    '<p class="hint"><b>From your partner:</b> they tap <b>Share my callouts (AirDrop)</b> under the month below and AirDrop it to you. Save it to Files, then pick it with the box below. Their whole month is added at once, and nothing is ever added twice.</p>' +
+    '<p class="hint"><b>From Dropbox:</b> every callout PDF made with this app carries its billing details, so the month builds itself from the PDFs already filed.</p>' +
     '<p class="hint"><b>Office computer:</b> drag the callout PDFs, or the whole month\'s folder, from Dropbox onto the box. <b>iPhone:</b> tap the box, then Browse › Dropbox and pick the PDFs.</p>' +
     '<input id="importPdf" type="file" accept="application/pdf,.pdf,.xlsx" multiple hidden />' +
     '<button type="button" class="drop" id="dropZone" data-act="importpdf">Drop callout PDFs or a folder here<small>or tap to pick files · the billing sheet .xlsx can go in too</small></button>' +
@@ -1213,12 +1216,13 @@ async function readCalloutPdf(file) {
   const buf = new Uint8Array(await file.arrayBuffer());
   let text = "";
   for (let i = 0; i < buf.length; i += 8192) text += String.fromCharCode.apply(null, buf.subarray(i, i + 8192));
-  const m = text.match(/\/Keywords \(STXFB1:([A-Za-z0-9+\/=]+)\)/);
+  const m = text.match(/\/Keywords \(STXFB([12]):([A-Za-z0-9+\/=]+)\)/);
   if (!m) return null;
-  const bin = atob(m[1]);
+  const bin = atob(m[2]);
   const bytes = new Uint8Array(bin.length);
   for (let i = 0; i < bin.length; i += 1) bytes[i] = bin.charCodeAt(i);
-  return JSON.parse(new TextDecoder().decode(bytes));
+  const data = JSON.parse(new TextDecoder().decode(bytes));
+  return m[1] === "2" ? (Array.isArray(data.callouts) ? data.callouts : []) : [data];
 }
 
 async function onImportPdfs(e) {
@@ -1282,9 +1286,12 @@ async function importFiles(all) {
   const out = { added: [], updated: [], same: 0, own: 0, daily: 0, bad: [] };
   for (let i = 0; i < files.length; i += 1) {
     const f = files[i];
-    let d = null;
-    try { d = await readCalloutPdf(f); } catch (err) { d = null; }
-    if (!d || !d.id || !d.date) { out.bad.push(f.name); continue; }
+    let recs = null;
+    try { recs = await readCalloutPdf(f); } catch (err) { recs = null; }
+    if (!recs || !recs.length) { out.bad.push(f.name); continue; }
+    for (let ri = 0; ri < recs.length; ri += 1) {
+    const d = recs[ri];
+    if (!d || !d.id || !d.date) continue;
     if (d.type !== "callout") { out.daily += 1; continue; }
     const have = store.reports[d.id];
     if (have && !have.imported) { out.own += 1; continue; }
@@ -1301,6 +1308,7 @@ async function importFiles(all) {
     store.reports[r.id] = r;
     if (!have) store.order.push(r.id);
     (have ? out.updated : out.added).push(shortDate(r.date) + " " + (r.printName || ""));
+    }
   }
   save();
   const parts = [];
@@ -1313,6 +1321,73 @@ async function importFiles(all) {
   if (sheetNote) parts.unshift(sheetNote);
   importNote = parts.join(" ");
   render();
+}
+
+/* One small PDF with this phone's finished callouts for the month: a readable list, plus the billing details
+   for every callout so the partner's app can add them all at once. Made for AirDrop between the Fairburn crew. */
+async function shareMonthBundle(key) {
+  const g = billingMonths().find((x) => x.key === key);
+  const mine = g ? g.done.filter((r) => !r.imported) : [];
+  if (!mine.length) { toast("No finished callouts of yours this month to share."); return; }
+  if (!window.jspdf) { toast("PDF library still loading — try again."); return; }
+  const who = String(store.settings.defaultName || mine[0].printName || "").trim();
+  const first = String(store.settings.fileWho || who.split(/\s+/)[0] || "crew").trim();
+  const name = (g.project + " callouts " + monthLabel(g.month) + " " + first).replace(/[\\/:*?"<>|]/g, "-") + ".pdf";
+  const { jsPDF } = window.jspdf;
+  const doc = new jsPDF({ unit: "pt", format: "letter" });
+  const M = 40;
+  doc.setFillColor(12, 35, 64);
+  doc.rect(0, 0, 612, 56, "F");
+  doc.setTextColor(255, 252, 245);
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(15);
+  doc.text(pdfText("Callouts to add · " + monthLabel(g.month)), M, 26);
+  doc.setFont("helvetica", "normal");
+  doc.setFontSize(10);
+  doc.text(pdfText("Project " + g.project + "  ·  from " + (who || first) + "  ·  " + mine.length + (mine.length === 1 ? " callout" : " callouts")), M, 43);
+  doc.setTextColor(20, 32, 51);
+  doc.setFontSize(10);
+  let y = 80;
+  doc.text(pdfText("To add these to the month's billing: open the Fairburn app, tap Callout billing, then Add callouts and pick this file."), M, y, { maxWidth: 532 });
+  y += 30;
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(9);
+  doc.text("Date", M, y); doc.text("WO", M + 70, y); doc.text("Man-hrs", M + 110, y); doc.text("Equip hrs", M + 160, y); doc.text("Work", M + 220, y);
+  y += 6;
+  doc.setDrawColor(196, 188, 168);
+  doc.line(M, y, 572, y);
+  doc.setFont("helvetica", "normal");
+  mine.forEach((r) => {
+    const d = collectBilling([r]);
+    const lines = doc.splitTextToSize(pdfText(String(r.summary || "").trim() || "—"), 352).slice(0, 3);
+    if (y + 14 + lines.length * 11 > 740) { doc.addPage(); y = 50; }
+    y += 14;
+    doc.text(usDate(r.date), M, y);
+    doc.text(pad3(r.calloutNo) || "—", M + 70, y);
+    doc.text(String(d.manHours), M + 110, y);
+    doc.text(String(d.equipHours), M + 160, y);
+    doc.text(lines, M + 220, y);
+    y += (lines.length - 1) * 11 + 4;
+    doc.line(M, y + 2, 572, y + 2);
+  });
+  doc.setProperties({
+    title: pdfText(name.replace(/\.pdf$/, "")), subject: "Fairburn callouts to add", creator: "STX Fairburn Report",
+    keywords: "STXFB2:" + toB64({ v: 1, from: who, month: g.month, callouts: mine.map(calloutData) }),
+  });
+  const blob = doc.output("blob");
+  const file = new File([blob], name, { type: "application/pdf" });
+  const payload = { title: name.replace(/\.pdf$/, ""), files: [file] };
+  try {
+    if (navigator.share && navigator.canShare && navigator.canShare(payload)) {
+      navigator.share(payload).then(() => toast("Sent. On their phone: Callout billing › Add callouts › pick the file.")).catch((err) => {
+        if (err && err.name === "AbortError") return;
+        downloadBlob(blob, name);
+      });
+      return;
+    }
+  } catch (err) {}
+  downloadBlob(blob, name);
+  toast("Saved " + name + ". AirDrop or email it to your partner.");
 }
 
 function removeImported(id) {
@@ -1567,6 +1642,7 @@ function bind() {
     zone.addEventListener("dragleave", () => zone.classList.remove("over"));
     zone.addEventListener("drop", onDropFiles);
   }
+  document.querySelectorAll("[data-bundle]").forEach((b) => b.addEventListener("click", () => shareMonthBundle(b.getAttribute("data-bundle"))));
   document.querySelectorAll("[data-unimport]").forEach((b) => b.addEventListener("click", () => removeImported(b.getAttribute("data-unimport"))));
   document.querySelectorAll("[data-qf]").forEach((el) => el.addEventListener("input", () => {
     const r = active();
@@ -2458,16 +2534,21 @@ function reportText(r) {
   ).filter((x, i) => x !== "" || i > 5).join("\n");
 }
 
-function calloutPayload(r) {
-  const data = {
+function calloutData(r) {
+  return {
     v: 1, id: r.id, type: r.type, date: r.date, projectNumber: r.projectNumber, projectName: r.projectName, calloutNo: r.calloutNo,
     printName: r.printName, fileWho: r.fileWho, summary: r.summary, q: r.q, equipment: r.equipment, materials: r.materials,
     createdAt: r.createdAt, updatedAt: r.updatedAt,
   };
-  const bytes = new TextEncoder().encode(JSON.stringify(data));
+}
+function toB64(obj) {
+  const bytes = new TextEncoder().encode(JSON.stringify(obj));
   let bin = "";
   for (let i = 0; i < bytes.length; i += 8192) bin += String.fromCharCode.apply(null, bytes.subarray(i, i + 8192));
   return btoa(bin);
+}
+function calloutPayload(r) {
+  return toB64(calloutData(r));
 }
 
 /* jsPDF's built-in fonts only cover Latin-1, so curly quotes and emoji typed on a phone are swapped or dropped. */
