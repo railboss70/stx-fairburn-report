@@ -24,10 +24,17 @@ const BILLING = {
   matRows: [52, 53, 54, 55, 56, 57, 58, 59, 60, 61],
   cols: ["D", "E", "F", "G", "H", "I", "J", "K", "L", "M", "N", "O", "P", "Q", "R", "S", "T", "U"],
   cell: { jobNumber: "Q3", date: "A", notes: "C", matDesc: "B", matRate: "H", matQty: "I", matUnit: "J" },
-  /* callout report class -> [straight time column, overtime column] */
+  /* report class -> [straight time column, overtime column], per report type */
   labor: {
     k_pm: { st: "D", ot: "E", label: "Project Manager" },
     c_foreman: { st: "G", ot: "H", label: "Inspector" },
+    c_oper: { st: "P", ot: "Q", label: "Utility Operator" },
+    c_labor: { st: "S", ot: "T", label: "Track Laborer" },
+  },
+  /* planned T&M uses the daily report's crew rows */
+  laborTM: {
+    c_super: { st: "G", ot: "H", label: "Superintendent" },
+    c_foreman: { st: "M", ot: "N", label: "Foreman / Inspector" },
     c_oper: { st: "P", ot: "Q", label: "Utility Operator" },
     c_labor: { st: "S", ot: "T", label: "Track Laborer" },
   },
@@ -426,8 +433,45 @@ function billingMonths() {
   return groups;
 }
 
+/* Planned T&M bills per work order, across however many days the job runs. Quoted jobs are listed but never billed here. */
+function billingJobs() {
+  const map = new Map();
+  list().forEach((r) => {
+    if (r.type !== "tm") return;
+    const project = String(r.projectNumber || "").trim();
+    const wo = pad3(r.calloutNo);
+    if (!project || !wo || !excelDate(r.date)) return;
+    const key = "tm|" + project + "|" + wo;
+    if (!map.has(key)) map.set(key, { key: key, kind: "tm", project: project, wo: wo, month: "", done: [], drafts: [], quoted: false });
+    const g = map.get(key);
+    g[reportFinished(r) ? "done" : "drafts"].push(r);
+    if (r.quoted) g.quoted = true;
+  });
+  const groups = Array.from(map.values());
+  const byDate = (a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0);
+  groups.forEach((g) => {
+    g.done.sort(byDate);
+    g.drafts.sort(byDate);
+    const all = g.done.concat(g.drafts).sort(byDate);
+    g.month = String(all[all.length - 1].date).slice(0, 7);
+    g.first = all[0].date;
+    g.last = all[all.length - 1].date;
+    g.record = ((store.settings.billingMonths || {})[g.key]) || null;
+    g.changed = !!(g.record && g.done.some((r) => !g.record.ids || g.record.ids.indexOf(r.id) < 0 || (r.updatedAt || "") > g.record.exportedAt));
+  });
+  groups.sort((a, b) => (a.last < b.last ? 1 : -1));
+  return groups;
+}
+function allBillingGroups() {
+  return billingMonths().concat(billingJobs());
+}
+function groupLabel(g) {
+  return g.kind === "tm" ? "Planned T&M · WO " + g.wo : monthLabel(g.month);
+}
+
 /* The job number on the sheet is project-workorder (26002-009). The month's callouts normally share one work order. */
 function monthWorkOrder(g) {
+  if (g.kind === "tm") return g.wo;
   const count = {};
   g.done.forEach((r) => { const wo = pad3(r.calloutNo); if (wo) count[wo] = (count[wo] || 0) + 1; });
   const best = Object.keys(count).sort((a, b) => count[b] - count[a])[0];
@@ -450,12 +494,13 @@ function collectBilling(reports) {
     }
     const summary = String(r.summary || "").trim();
     if (summary) day.notes.push(summary);
-    Object.keys(BILLING.labor).forEach((id) => {
+    const map = r.type === "tm" ? BILLING.laborTM : BILLING.labor;
+    Object.keys(map).forEach((id) => {
       const a = r.q[id] || {};
       const hrs = billNum(a.hrs);
       if (a.a !== "yes" && !hrs) return;
-      if (!hrs) { warnings.push(usDate(r.date) + ": " + BILLING.labor[id].label + " is marked Yes with no hours."); return; }
-      const col = a.rate === "st" ? BILLING.labor[id].st : BILLING.labor[id].ot;
+      if (!hrs) { warnings.push(usDate(r.date) + ": " + map[id].label + " is marked Yes with no hours."); return; }
+      const col = rateOf(r, a) === "st" ? map[id].st : map[id].ot;
       day.labor[col] = (day.labor[col] || 0) + hrs;
       manHours += hrs;
     });
@@ -539,7 +584,8 @@ async function buildBillingFiles(group) {
   if (!billingTemplateCurrent()) throw new Error("Load the updated billing sheet first.");
   const template = await getBillingTemplate();
   if (!template) throw new Error("Load the billing sheet first.");
-  if (!group.done.length) throw new Error("No finished callout reports for " + monthLabel(group.month) + " yet.");
+  if (group.quoted) throw new Error("This job is marked as already quoted, so no T&M billing sheet is built.");
+  if (!group.done.length) throw new Error("No finished reports for " + groupLabel(group) + " yet.");
   const data = collectBilling(group.done);
   const jobNumber = group.project + "-" + monthWorkOrder(group);
   const parts = Math.max(1, Math.ceil(data.days.length / BILLING.dateRows.length), Math.ceil(data.materials.length / BILLING.matRows.length));
@@ -548,15 +594,15 @@ async function buildBillingFiles(group) {
     const days = data.days.slice(p * BILLING.dateRows.length, (p + 1) * BILLING.dateRows.length);
     const mats = data.materials.slice(p * BILLING.matRows.length, (p + 1) * BILLING.matRows.length);
     const blob = await fillBillingSheet(template, jobNumber, days, mats);
-    const name = billingFileName(group.project, p + 1, parts);
+    const name = billingFileName(group.kind === "tm" ? group.project + "-" + group.wo : group.project, p + 1, parts);
     files.push({ name: name, blob: blob, file: new File([blob], name, { type: XLSX_MIME }) });
   }
   const warnings = data.warnings.slice();
   if (group.drafts.length) {
-    warnings.unshift(group.drafts.length + " callout report" + (group.drafts.length === 1 ? " is" : "s are") + " not finished and not on this sheet: " +
+    warnings.unshift(group.drafts.length + " report" + (group.drafts.length === 1 ? " is" : "s are") + " not finished and not on this sheet: " +
       group.drafts.map((r) => usDate(r.date)).join(", ") + ".");
   }
-  if (parts > 1) warnings.unshift("More than 7 callout dates this month, so the billing is split across " + parts + " sheets.");
+  if (parts > 1) warnings.unshift("More than 7 dates, so the billing is split across " + parts + " sheets.");
   return {
     key: group.key,
     builtAt: new Date().toISOString(),

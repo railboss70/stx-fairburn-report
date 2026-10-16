@@ -1,11 +1,12 @@
 # STX Fairburn Report
 
-Phone-first report app for the STX crew at CSX Fairburn Intermodal. One app does both reports:
+Phone-first report app for the STX crew at CSX Fairburn Intermodal. One app does three reports:
 
 - **Daily Project Report** (project 26001 CSX Intermodal GA)
 - **Fairburn Callout Report** (project 26002 CSX Fairburn Extra Work GA)
+- **Planned T&M Report** (project 26002, planned time-and-materials work with its own work order)
 
-It is a sibling of [stx-daily-summary](https://github.com/railboss70/stx-daily-summary): same look, same step-by-step flow, same PDF style, same "Share PDF + photos" to Mail.
+It is a sibling of [stx-daily-summary](https://github.com/railboss70/stx-daily-summary): same look, same step-by-step flow, same PDF style, same JHA scan and photo-page layout.
 
 ## Open on your iPhone
 
@@ -25,6 +26,7 @@ The app names every PDF in the office filing format and prints the same title in
 | ------- | ----------------------------------- | ------------------------------ |
 | Daily   | `project- YYMMDD name`              | `26001- 260226 Chris.pdf`      |
 | Callout | `project- YYMMDD-workorder# name`   | `26002- 260709-007 Chris.pdf`  |
+| Planned T&M | `project- YYMMDD-workorder# name` | `26002- 261016-015 Chris.pdf` |
 
 "Name" is the **Name on file names** field (falls back to the first word of the print name). The work order number is padded to three digits; a new callout reuses the last one used that month, or starts from the month number. The name can still be edited on the Send step.
 
@@ -33,6 +35,7 @@ The app names every PDF in the office filing format and prints the same title in
 Both reports: weather, progress summary, delays, **materials used**, **equipment used**, safety checklist, photos, signature.
 
 - Daily adds crew consist and work hours (superintendent, foreman / inspector, operator, laborer).
+- Planned T&M asks the same as the daily report, plus its work order number and an **Already quoted** box.
 - Callout adds the work order number, time the call was received, time arrived onsite, and name / hours for each class.
 
 ## Using the app
@@ -40,14 +43,14 @@ Both reports: weather, progress summary, delays, **materials used**, **equipment
 - **Save** is on every step (reports also save as you type). **Home**, or tapping the STX logo, goes back to the home screen; the report stays in Drafts.
 - **Version** shows at the top of the home screen, so you can tell when phones have picked up an update.
 - **JHA / pre-task safety planner** (Photos step): photograph both pages, drag the corners to the paper edges, and the app straightens it like a scanner ("Scan look" whitens the paper). Both pages print right after the report.
-- **Photo pages**: 1, 2 or 4 photos per page; tap photos to put up to 4 on one page, split them out, or leave one off the report. The home-screen setting is the default for new reports.
+- **Photo pages** (last step): 1, 2 or 4 photos per page; tap photos to put up to 4 on one page, split them out, or leave one off the report. The home-screen setting is the default for new reports.
 - **PDF stays under 2 MB** so it goes through email; photos are scaled back evenly if needed. The last step shows the page count and size.
 - **Weather** tries up to 5 nearby National Weather Service stations when the closest one is down.
-- Last step: **Download PDF** keeps a copy, **Share PDF** sends just the PDF (photos are already inside it) to Mail, Messages and so on. Both need the print name and signature.
+- Last step: **Preview PDF** shows the finished report on screen ("Back to report" returns to it), **Download PDF** keeps a copy, **Share PDF** sends just the PDF (photos are already inside it) to Mail, Messages and so on. Both need the print name and signature.
 
 ## Monthly callout billing
 
-Fairburn callouts bill by the month. **Home > Callout billing** keeps a running billing for each month, and a callout's Send step shows which month it went on.
+Fairburn callouts bill by the month. **Home > Billing** keeps a running billing for each month, and a callout's Send step shows which month it went on.
 
 - **A callout is added to its month as soon as its report is finished**: the PDF is downloaded or shared, or the report is marked sent. Unfinished drafts are listed but left off.
 - **Dropbox / office computer**: open `https://railboss70.github.io/stx-fairburn-report/#billing` (bookmark it) and drag the callout PDFs, or the whole month's folder, from Dropbox onto the drop box. The billing sheet `.xlsx` can be dropped in too the first time. Daily reports and other PDFs in the folder are skipped. On iPhone, tap the box and use Browse › Dropbox.
@@ -64,6 +67,15 @@ Fairburn callouts bill by the month. **Home > Callout billing** keeps a running 
 - The sheet has 7 date lines and 10 material lines. A month with more rolls into a second file (`..._261005-2.xlsx`).
 - The export includes the callouts on that phone plus any added from PDFs.
 - If the sheet layout changes (rows or columns move), update `BILLING` at the top of `docs/billing.js` and `EQUIPMENT` in `docs/app.js`.
+
+## Planned T&M billing
+
+- Each planned T&M work order gets **its own billing sheet** with every day of the job on it, under **Billing > Planned T&M jobs**. When the job is done, tap **Job complete · export**.
+- The sheet is named `26002-015_BILLING_SHEET_261016.xlsx` (project-workorder, then the export date); the job number is `26002-015`.
+- Hours default to **straight time**; switch a crew row to OT when needed.
+- Labor: Superintendent > Superintendent / Inspector, Foreman / Inspector > Foreman / Driver, Operator > Utility Operator, Laborer > Track Laborer.
+- **Already quoted** jobs are billed off the quote: they are listed as Quoted and no billing sheet is built.
+- T&M days share between the two phones the same way as callouts (**Share my T&M days (AirDrop)**, or add the PDFs).
 
 ## Page breaks
 
@@ -91,8 +103,8 @@ Static site, no build step. Everything the phone loads is in `docs/`.
 - Questions, project numbers and the site address are constants at the top of `docs/app.js` (`DELAYS`, `SAFETY`, `TYPES`, `SITE`, `EQUIP_PRESETS`, `MATERIAL_UOM`).
 - The PDF layout is `buildPdf()` in `docs/app.js`.
 - The app works offline through `docs/sw.js`, which caches files under a version name. **After any change, bump the version in both places or phones keep the old copy:**
-  - `const CACHE = "stx-fairburn-v6"` in `docs/sw.js` (and the `?v=6` lines in its list)
-  - the `?v=6` on `app.js` and `billing.js` in `docs/index.html`
+  - `const CACHE = "stx-fairburn-v7"` in `docs/sw.js` (and the `?v=7` lines in its list)
+  - the `?v=7` on `app.js` and `billing.js` in `docs/index.html`
 
 ## Files
 
@@ -100,7 +112,8 @@ Static site, no build step. Everything the phone loads is in `docs/`.
 | --- | --- |
 | `docs/index.html` | Page shell and styles |
 | `docs/app.js` | The whole app: form, weather, photos, signature, PDF, sharing |
-| `docs/billing.js` | Monthly callout billing: fills and exports the billing sheet |
+| `docs/billing.js` | Monthly callout and planned T&M billing: fills and exports the billing sheet |
+| `docs/pdf.min.js`, `docs/pdf.worker.min.js` | pdf.js 3.11.174, draws the PDF preview (same copy as stx-daily-summary) |
 | `docs/jszip.min.js` | JSZip 3.10.1, reads and writes the .xlsx |
 | `docs/sw.js` | Offline cache |
 | `docs/manifest.webmanifest`, `docs/icon-*.png` | Home-screen install name and icon |

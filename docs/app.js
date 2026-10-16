@@ -1,7 +1,7 @@
 /* STX Fairburn Report — daily project report and callout report in one app.
    Built as a sibling of stx-daily-summary: same storage, photo, signature, weather and share plumbing. */
 const DEFAULT_EMAIL = "reports@stxrailroad.com";
-const APP_VERSION = "6";
+const APP_VERSION = "7";
 const KEY = "stx-fairburn-v1";
 const DB_NAME = "stx-fairburn";
 const PHOTO_STORE = "photos";
@@ -38,6 +38,24 @@ const TYPES = {
     footer: "Daily Project Report",
     project: "26001",
     projectName: "CSX Intermodal GA",
+    crewStep: "Crew",
+    crewTitle: "Crew consist and work hours",
+    crewHint: "List start time and end time for each class on site.",
+    crew: [
+      { id: "c_super", kind: "crew", q: "Superintendent - Hours", short: "Superintendent" },
+      { id: "c_foreman", kind: "crew", q: "Foreman / Inspector - Hours", short: "Foreman / Inspector" },
+      { id: "c_oper", kind: "crew", q: "Operator - Hours", short: "Operator" },
+      { id: "c_labor", kind: "crew", q: "Laborer - Hours", short: "Laborer" },
+    ],
+    safety: [SAFETY.brief, SAFETY.injury, SAFETY.locks, SAFETY.switches, SAFETY.parked, SAFETY.secure],
+  },
+  tm: {
+    label: "Planned T&M report",
+    tag: "T&M",
+    title: "PLANNED T&M REPORT",
+    footer: "Planned T&M Report",
+    project: "26002",
+    projectName: "CSX Fairburn Extra Work GA",
     crewStep: "Crew",
     crewTitle: "Crew consist and work hours",
     crewHint: "List start time and end time for each class on site.",
@@ -181,6 +199,7 @@ function freshSettings() {
     projects: {
       daily: { num: TYPES.daily.project, name: TYPES.daily.projectName },
       callout: { num: TYPES.callout.project, name: TYPES.callout.projectName },
+      tm: { num: TYPES.tm.project, name: TYPES.tm.projectName },
     },
   };
 }
@@ -200,7 +219,7 @@ function blankManual() {
 function blankReport(settings, type) {
   const now = new Date().toISOString();
   const s = settings || freshSettings();
-  const kind = type === "callout" ? "callout" : "daily";
+  const kind = type === "callout" || type === "tm" ? type : "daily";
   const proj = (s.projects || {})[kind] || {};
   return {
     id: uid(),
@@ -212,6 +231,7 @@ function blankReport(settings, type) {
     projectNumber: proj.num || TYPES[kind].project,
     projectName: proj.name || TYPES[kind].projectName,
     calloutNo: kind === "callout" ? defaultWorkOrder(s, todayISO()) : "",
+    quoted: false,
     printName: s.defaultName || "",
     fileWho: s.fileWho || "",
     summary: "",
@@ -299,7 +319,8 @@ function blobToDataUrl(blob) {
 }
 
 function fillReport(r) {
-  if (r.type !== "callout") r.type = "daily";
+  if (r.type !== "callout" && r.type !== "tm") r.type = "daily";
+  r.quoted = !!r.quoted;
   if (!Array.isArray(r.photos)) r.photos = [];
   if (!r.q || typeof r.q !== "object") r.q = {};
   if (!Array.isArray(r.materials) || !r.materials.length) r.materials = [emptyRow.materials()];
@@ -335,7 +356,7 @@ async function load() {
   }
   const fresh = freshSettings();
   if (!store.settings.projects || typeof store.settings.projects !== "object") store.settings.projects = fresh.projects;
-  ["daily", "callout"].forEach((k) => {
+  ["daily", "callout", "tm"].forEach((k) => {
     if (!store.settings.projects[k] || !store.settings.projects[k].num) store.settings.projects[k] = fresh.projects[k];
   });
   if ([1, 2, 4].indexOf(Number(store.settings.photosPerPage)) < 0) store.settings.photosPerPage = 1;
@@ -391,7 +412,16 @@ function patch(p) {
   save();
 }
 function typeOf(r) {
-  return TYPES[r && r.type === "callout" ? "callout" : "daily"];
+  return TYPES[r && TYPES[r.type] ? r.type : "daily"];
+}
+/* callouts and planned T&M carry a work order number and are billed */
+function hasWO(r) {
+  return !!r && (r.type === "callout" || r.type === "tm");
+}
+/* callouts bill as overtime, planned T&M as straight time, unless the crew row is switched */
+function rateOf(r, a) {
+  if (a && (a.rate === "st" || a.rate === "ot")) return a.rate;
+  return r && r.type === "tm" ? "st" : "ot";
 }
 function stepNames(r) {
   return ["Job", "Work", "Materials", typeOf(r).crewStep, "Safety", "Photos", "Send"];
@@ -472,7 +502,7 @@ function autoTitle(r) {
   const proj = String(r.projectNumber || "").trim() || "00000";
   const ymd = String(r.date || "").replace(/-/g, "").slice(2) || "YYMMDD";
   const who = String(r.fileWho || "").trim() || String(r.printName || "").trim().split(/\s+/)[0] || "Name";
-  const call = r.type === "callout" ? "-" + (pad3(r.calloutNo) || "000") : "";
+  const call = hasWO(r) ? "-" + (pad3(r.calloutNo) || "000") : "";
   return proj + "- " + ymd + call + " " + who;
 }
 function fileTitle(r) {
@@ -499,7 +529,7 @@ function homeHtml() {
     '<div class="card"><h2>' + title + "</h2>" +
     (rows.length ? rows.map((r) =>
       '<div class="list-row" data-open="' + r.id + '"><div><b>' + esc(r.projectNumber || "No project #") + "</b>" +
-      '<span class="tag' + (r.type === "callout" ? " callout" : "") + '">' + typeOf(r).tag + (r.type === "callout" && pad3(r.calloutNo) ? " · WO " + pad3(r.calloutNo) : "") + "</span>" +
+      '<span class="tag' + (r.type === "callout" ? " callout" : r.type === "tm" ? " tm" : "") + '">' + typeOf(r).tag + (hasWO(r) && pad3(r.calloutNo) ? " · WO " + pad3(r.calloutNo) : "") + "</span>" +
       '<div class="muted">' + esc(formatLong(r.date)) + (r.printName ? " · " + esc(r.printName) : "") + "</div></div>" +
       '<button class="btn btn-danger" style="width:auto;margin:0;padding:8px 10px;font-size:13px" data-del="' + r.id + '">' +
       (pendingDelete === r.id ? "Tap again to delete" : "Delete") + "</button></div>"
@@ -512,8 +542,9 @@ function homeHtml() {
     (todayDaily ? '<button class="btn btn-navy" data-act="start">Continue today\'s daily report</button>' : "") +
     '<button class="btn ' + (todayDaily ? "btn-outline" : "btn-navy") + '" data-act="new-daily">Start a daily report</button>' +
     '<button class="btn btn-gold" data-act="new-callout">Start a callout report</button>' +
+    '<button class="btn btn-outline" data-act="new-tm">Start a planned T&amp;M report</button>' +
     (lastDaily ? '<button class="btn btn-outline" data-act="fromlast">New daily from last crew</button>' : "") +
-    '<button class="btn btn-outline" data-act="billing">Callout billing</button>' +
+    '<button class="btn btn-outline" data-act="billing">Billing</button>' +
     '<div style="height:14px"></div>' +
     group("Drafts", drafts, "No drafts. Start a report for the shift.") +
     group("Sent", sent, "Sent reports land here after you share them.") +
@@ -939,10 +970,10 @@ function questionHtml(r, def) {
     h += field("Name", qInput(def.id, "name", a.name, 'placeholder="Who" autocapitalize="words"')) +
       splitRow(field("Start", qInput(def.id, "start", a.start, 'type="time"')), field("End", qInput(def.id, "end", a.end, 'type="time"'))) +
       splitRow(field("Hours", qInput(def.id, "hrs", a.hrs, 'inputmode="decimal" placeholder="10"')), field("Notes", qInput(def.id, "d", a.d, 'placeholder="Optional"'))) +
-      (r.type === "callout"
+      (hasWO(r)
         ? "<label>Bill these hours as</label>" +
-          '<div class="kind"><button type="button" data-rate="' + def.id + '" data-v="ot" class="' + (a.rate === "st" ? "" : "on") + '">Overtime</button>' +
-          '<button type="button" data-rate="' + def.id + '" data-v="st" class="' + (a.rate === "st" ? "on" : "") + '">Straight time</button></div>'
+          '<div class="kind"><button type="button" data-rate="' + def.id + '" data-v="st" class="' + (rateOf(r, a) === "st" ? "on" : "") + '">Straight time</button>' +
+          '<button type="button" data-rate="' + def.id + '" data-v="ot" class="' + (rateOf(r, a) === "ot" ? "on" : "") + '">Overtime</button></div>'
         : "");
   } else if (def.kind === "time") {
     h += field(def.timeLabel, qInput(def.id, "time", a.time, 'type="time"')) +
@@ -958,10 +989,17 @@ function stepHtml(r) {
   if (step === 0) {
     return '<div class="card"><h2>Job information</h2>' +
       "<label>Report type</label>" +
-      '<div class="kind"><button type="button" data-type="daily" class="' + (r.type === "daily" ? "on" : "") + '">Daily report</button>' +
-      '<button type="button" data-type="callout" class="' + (r.type === "callout" ? "on" : "") + '">Callout report</button></div>' +
+      '<div class="kind three"><button type="button" data-type="daily" class="' + (r.type === "daily" ? "on" : "") + '">Daily</button>' +
+      '<button type="button" data-type="callout" class="' + (r.type === "callout" ? "on" : "") + '">Callout</button>' +
+      '<button type="button" data-type="tm" class="' + (r.type === "tm" ? "on" : "") + '">Planned T&amp;M</button></div>' +
       field("Date", '<input id="k-date" type="date" data-k="date" value="' + esc(r.date) + '" />') +
       (r.type === "callout" ? field("Work order number", input("calloutNo", r.calloutNo, 'placeholder="007" inputmode="numeric" maxlength="4"')) + '<p class="hint">The -007 in the file name. Callouts billed together share it.</p>' : "") +
+      (r.type === "tm"
+        ? field("T&amp;M work order number", input("calloutNo", r.calloutNo, 'placeholder="015" inputmode="numeric" maxlength="4"')) +
+          '<p class="hint">Every day of this job uses the same work order, so they all go on one billing sheet.</p>' +
+          '<button type="button" class="check-row' + (r.quoted ? " on" : "") + '" data-act="quotetoggle" style="margin-top:8px"><span class="box">' + (r.quoted ? "✓" : "") + "</span>Already quoted (billed off the quote)</button>" +
+          (r.quoted ? '<p class="hint">Quoted work gets the report only. No T&amp;M billing sheet is built for this work order.</p>' : "")
+        : "") +
       field("Project number", input("projectNumber", r.projectNumber, 'placeholder="Project number" inputmode="numeric"')) +
       field("Project name", input("projectName", r.projectName, 'placeholder="Project name"')) +
       field("Print name", input("printName", r.printName, 'placeholder="Your name" autocomplete="name" autocapitalize="words"')) +
@@ -1003,7 +1041,7 @@ function stepHtml(r) {
         '<input id="cap-' + p.id + '" data-caption="' + p.id + '" value="' + esc(p.caption || "") + '" placeholder="What does this show?" />' +
         '<button class="btn btn-danger" data-rmphoto="' + p.id + '">Remove</button></div>').join("") ||
         (purgedNote ? "" : '<p class="empty">No photos yet.</p>')) +
-      photoPagesCard(r) +
+      (r.photos.length ? '<p class="hint" style="margin-top:10px">Arrange which photos share a page on the last step.</p>' : "") +
       "</div>";
   }
   const open = openItems(r);
@@ -1015,17 +1053,19 @@ function stepHtml(r) {
     '<div class="card"><h2>Sign and send</h2>' +
     field("Print name", input("printName", r.printName, 'placeholder="Your name"')) +
     field("PDF file name", '<input id="k-pdfTitle" data-k="pdfTitle" value="' + esc(r.pdfTitle || autoTitle(r)) + '" placeholder="26001- 260226 Chris" />') +
-    '<p class="hint">Office format is project- YYMMDD name, like 26001- 260226 Chris. Callouts add the callout number: 26002- 260709-007 Chris.</p>' +
+    '<p class="hint">Office format is project- YYMMDD name, like 26001- 260226 Chris. Callouts and planned T&amp;M add the work order: 26002- 260709-007 Chris.</p>' +
     field("Email to", '<input id="k-recipientEmail" type="email" inputmode="email" data-k="recipientEmail" value="' + esc(r.recipientEmail) + '" />') +
     "<label>Signature</label>" +
     '<canvas class="sig" id="sig"></canvas>' +
     '<button class="btn btn-ghost" data-act="clearsig">Clear signature</button></div>' +
+    ((r.photos || []).length ? '<div class="card"><h2>Photo pages</h2>' + photoPagesCard(r) + "</div>" : "") +
     '<div class="card"><h2>Send the report</h2>' +
-    '<p class="hint">Download the PDF to keep a copy, then Share it to Mail (or Messages) to send it to the office. Photos are already inside the PDF.</p>' +
+    '<p class="hint">Preview it to look it over (Back to report returns here), Download a copy, then Share it to Mail or Messages. Photos are already inside the PDF.</p>' +
     '<p class="layout-status" id="layoutStatus">Building the PDF…</p>' +
+    '<button class="btn btn-outline" data-act="previewpdf" disabled>Preparing PDF…</button>' +
     '<button class="btn btn-gold" data-act="pdf" disabled>Preparing PDF…</button>' +
     '<button class="btn btn-navy" data-act="send" disabled>Preparing PDF…</button></div>' +
-    (r.type === "callout" ? billingSendHtml(r) : "") +
+    (hasWO(r) ? billingSendHtml(r) : "") +
     (askSent
       ? '<div class="card"><h2>Did the email go out?</h2>' +
         '<p class="hint">Only mark it sent after the office actually gets it.</p>' +
@@ -1122,13 +1162,18 @@ function billingTemplateHtml() {
 
 function monthStats(g) {
   const data = collectBilling(g.done);
-  return data.days.length + (data.days.length === 1 ? " callout day" : " callout days") + " · " +
+  return data.days.length + (data.days.length === 1 ? " day" : " days") + " · " +
     data.manHours + " man-hrs · " + data.equipHours + " equip hrs" +
     (data.materials.length ? " · " + data.materials.length + (data.materials.length === 1 ? " material" : " materials") : "");
 }
 
 function monthState(g) {
   const thisMonth = todayISO().slice(0, 7);
+  if (g.kind === "tm") {
+    if (g.quoted) return { tag: "Quoted", cls: "", button: "" };
+    if (g.record) return { tag: "Exported " + shortDate(g.record.exportedAt.slice(0, 10)), cls: "", button: g.changed ? "Export updated sheet" : "Export again" };
+    return { tag: "Open", cls: "", button: "Job complete · export" };
+  }
   if (g.record) return { tag: "Exported " + shortDate(g.record.exportedAt.slice(0, 10)), cls: "", button: g.changed ? "Export updated sheet" : "Export again" };
   if (g.month < thisMonth) return { tag: "Ready to export", cls: " callout", button: "Month complete · export" };
   return { tag: "Open", cls: "", button: "Export so far" };
@@ -1146,15 +1191,17 @@ function billingMonthHtml(g) {
   const st = monthState(g);
   const busy = billBusy === g.key;
   const ready = typeof billingTemplateCurrent === "function" && billingTemplateCurrent();
-  return '<div class="item"><div class="item-top"><b>' + esc(monthLabel(g.month)) + '</b><span class="tag' + st.cls + '">' + esc(st.tag) + "</span></div>" +
+  const what = g.kind === "tm" ? "day" : "callout";
+  return '<div class="item"><div class="item-top"><b>' + esc(groupLabel(g)) + '</b><span class="tag' + st.cls + '">' + esc(st.tag) + "</span></div>" +
     '<div class="muted">Job ' + esc(g.project + "-" + monthWorkOrder(g)) + " · " + (g.done.length ? esc(monthStats(g)) : "nothing finished yet") + "</div>" +
     (g.done.length ? '<div style="margin-top:6px">' + g.done.map(calloutLine).join("") + "</div>" : "") +
-    (g.drafts.length ? '<p class="hint" style="margin:6px 0 0">' + g.drafts.length + " callout" + (g.drafts.length === 1 ? "" : "s") + " (" + esc(g.drafts.map((r) => shortDate(r.date)).join(", ")) +
+    (g.kind === "tm" && g.quoted ? '<p class="hint" style="margin:6px 0 0"><b>Already quoted:</b> billed off the quote, so no T&amp;M billing sheet is built for this work order.</p>' : "") +
+    (g.drafts.length ? '<p class="hint" style="margin:6px 0 0">' + g.drafts.length + " " + what + (g.drafts.length === 1 ? "" : "s") + " (" + esc(g.drafts.map((r) => shortDate(r.date)).join(", ")) +
       ") not finished. Download or share the report and it is added.</p>" : "") +
-    (g.changed ? '<p class="hint" style="margin:6px 0 0"><b>Callouts were added or changed since the last export.</b></p>' : "") +
+    (g.changed ? '<p class="hint" style="margin:6px 0 0"><b>Reports were added or changed since the last export.</b></p>' : "") +
     (g.done.some((r) => !r.imported)
-      ? '<button class="btn btn-outline" data-bundle="' + esc(g.key) + '">Share my callouts (AirDrop)</button>' : "") +
-    (g.done.length
+      ? '<button class="btn btn-outline" data-bundle="' + esc(g.key) + '">Share my ' + (g.kind === "tm" ? "T&amp;M days" : "callouts") + " (AirDrop)</button>" : "") +
+    (g.done.length && !(g.kind === "tm" && g.quoted)
       ? (ready
         ? '<button class="btn btn-navy" data-bill="' + esc(g.key) + '"' + (billBusy ? " disabled" : "") + ">" + (busy ? "Building…" : esc(st.button)) + "</button>"
         : '<p class="hint" style="margin:8px 0 0"><b>Load the billing sheet above to export.</b></p>')
@@ -1181,8 +1228,9 @@ let importNote = "";
 
 function billingScreenHtml() {
   const months = typeof billingMonths === "function" ? billingMonths() : [];
+  const jobs = typeof billingJobs === "function" ? billingJobs() : [];
   return '<header class="hero" style="padding-bottom:14px"><div class="brand">' + markSvg() +
-    "<div><small>Callout billing</small></div>" +
+    "<div><small>Billing</small></div>" +
     '<button type="button" class="homebtn" data-act="home">Home</button></div>' +
     '<div class="muted" style="color:rgba(255,252,245,.75);margin-top:8px">Billed by the month · CSX Fairburn</div></header>' +
     '<main class="content">' +
@@ -1194,14 +1242,28 @@ function billingScreenHtml() {
     '<input id="importPdf" type="file" accept="application/pdf,.pdf,.xlsx" multiple hidden />' +
     '<button type="button" class="drop" id="dropZone" data-act="importpdf">Drop callout PDFs or a folder here<small>or tap to pick files · the billing sheet .xlsx can go in too</small></button>' +
     (importNote ? '<p class="hint" style="margin-top:10px">' + importNote + "</p>" : "") + "</div>" +
-    '<div class="card"><h2>Months</h2>' +
+    '<div class="card"><h2>Callouts by month</h2>' +
     '<p class="hint">Each finished callout is added to its month. When the month is done, export the billing sheet.</p>' +
     (months.length ? months.slice(0, 8).map(billingMonthHtml).join("") : '<p class="empty">Finished callout reports show up here by month.</p>') +
+    "</div>" +
+    '<div class="card"><h2>Planned T&amp;M jobs</h2>' +
+    '<p class="hint">Each planned T&amp;M work order gets its own billing sheet, with every day of the job on it. Quoted jobs are listed but not billed here.</p>' +
+    (jobs.length ? jobs.slice(0, 10).map(billingMonthHtml).join("") : '<p class="empty">Planned T&amp;M reports show up here by work order.</p>') +
     "</div>" +
     '<div class="nav"><button class="btn btn-ghost" data-act="home">Home</button><span></span></div></main>';
 }
 
 function billingSendHtml(r) {
+  if (r.type === "tm") {
+    const job = String(r.projectNumber || "").trim() + "-" + (pad3(r.calloutNo) || "—");
+    return '<div class="card"><h2>T&amp;M billing · ' + esc(job) + "</h2>" +
+      (r.quoted
+        ? '<p class="hint"><b>Already quoted.</b> No T&amp;M billing sheet is built for this work order.</p>'
+        : reportFinished(r)
+          ? '<p class="hint"><b>This day is on the ' + esc(job) + " billing sheet.</b> Export it from Billing when the job is done.</p>"
+          : '<p class="hint">This day goes on the ' + esc(job) + " billing sheet as soon as you download or share the PDF.</p>") +
+      '<button class="btn btn-ghost" data-act="billing">Open billing</button></div>';
+  }
   const label = monthLabel(String(r.date || "").slice(0, 7));
   const finished = reportFinished(r);
   return '<div class="card"><h2>' + esc(label) + " billing</h2>" +
@@ -1292,17 +1354,17 @@ async function importFiles(all) {
     for (let ri = 0; ri < recs.length; ri += 1) {
     const d = recs[ri];
     if (!d || !d.id || !d.date) continue;
-    if (d.type !== "callout") { out.daily += 1; continue; }
+    if (d.type !== "callout" && d.type !== "tm") { out.daily += 1; continue; }
     const have = store.reports[d.id];
     if (have && !have.imported) { out.own += 1; continue; }
     if (have && String(have.updatedAt || "") >= String(d.updatedAt || "")) { out.same += 1; continue; }
     const now = new Date().toISOString();
-    const r = blankReport(store.settings, "callout");
+    const r = blankReport(store.settings, d.type);
     Object.assign(r, {
       id: d.id, date: d.date, projectNumber: d.projectNumber || "", projectName: d.projectName || "", calloutNo: d.calloutNo || "",
       printName: d.printName || "", fileWho: d.fileWho || "", summary: d.summary || "", q: d.q || {},
       equipment: d.equipment || [], materials: d.materials || [], createdAt: d.createdAt || now, updatedAt: d.updatedAt || now,
-      status: "sent", sentAt: now, finishedAt: now, imported: true, importedFrom: f.name, photos: [], signatureDataUrl: "",
+      quoted: !!d.quoted, status: "sent", sentAt: now, finishedAt: now, imported: true, importedFrom: f.name, photos: [], signatureDataUrl: "",
     });
     fillReport(r);
     store.reports[r.id] = r;
@@ -1326,13 +1388,13 @@ async function importFiles(all) {
 /* One small PDF with this phone's finished callouts for the month: a readable list, plus the billing details
    for every callout so the partner's app can add them all at once. Made for AirDrop between the Fairburn crew. */
 async function shareMonthBundle(key) {
-  const g = billingMonths().find((x) => x.key === key);
+  const g = allBillingGroups().find((x) => x.key === key);
   const mine = g ? g.done.filter((r) => !r.imported) : [];
-  if (!mine.length) { toast("No finished callouts of yours this month to share."); return; }
+  if (!mine.length) { toast("Nothing finished of yours here to share."); return; }
   if (!window.jspdf) { toast("PDF library still loading — try again."); return; }
   const who = String(store.settings.defaultName || mine[0].printName || "").trim();
   const first = String(store.settings.fileWho || who.split(/\s+/)[0] || "crew").trim();
-  const name = (g.project + " callouts " + monthLabel(g.month) + " " + first).replace(/[\\/:*?"<>|]/g, "-") + ".pdf";
+  const name = (g.kind === "tm" ? g.project + "-" + g.wo + " T&M days " + first : g.project + " callouts " + monthLabel(g.month) + " " + first).replace(/[\\/:*?"<>|]/g, "-") + ".pdf";
   const { jsPDF } = window.jspdf;
   const doc = new jsPDF({ unit: "pt", format: "letter" });
   const M = 40;
@@ -1341,14 +1403,14 @@ async function shareMonthBundle(key) {
   doc.setTextColor(255, 252, 245);
   doc.setFont("helvetica", "bold");
   doc.setFontSize(15);
-  doc.text(pdfText("Callouts to add · " + monthLabel(g.month)), M, 26);
+  doc.text(pdfText((g.kind === "tm" ? "Planned T&M days to add · WO " + g.wo : "Callouts to add · " + monthLabel(g.month))), M, 26);
   doc.setFont("helvetica", "normal");
   doc.setFontSize(10);
-  doc.text(pdfText("Project " + g.project + "  ·  from " + (who || first) + "  ·  " + mine.length + (mine.length === 1 ? " callout" : " callouts")), M, 43);
+  doc.text(pdfText("Project " + g.project + "  ·  from " + (who || first) + "  ·  " + mine.length + (mine.length === 1 ? " report" : " reports")), M, 43);
   doc.setTextColor(20, 32, 51);
   doc.setFontSize(10);
   let y = 80;
-  doc.text(pdfText("To add these to the month's billing: open the Fairburn app, tap Callout billing, then Add callouts and pick this file."), M, y, { maxWidth: 532 });
+  doc.text(pdfText("To add these to the billing: open the Fairburn app, tap Billing, then Add callouts and pick this file."), M, y, { maxWidth: 532 });
   y += 30;
   doc.setFont("helvetica", "bold");
   doc.setFontSize(9);
@@ -1427,7 +1489,7 @@ async function onBillingFile(e) {
 async function prepareBilling(key) {
   if (billBusy) return;
   if (!billingTemplateCurrent()) { toast("Load the updated billing sheet first."); return; }
-  const g = billingMonths().find((x) => x.key === key);
+  const g = allBillingGroups().find((x) => x.key === key);
   if (!g) { toast("No callout reports for that month."); return; }
   billBusy = key;
   billResult = null;
@@ -1558,7 +1620,8 @@ function bind() {
   }));
   document.querySelectorAll("[data-type]").forEach((b) => b.addEventListener("click", () => {
     const r = active();
-    const next = b.getAttribute("data-type") === "callout" ? "callout" : "daily";
+    const t = b.getAttribute("data-type");
+    const next = t === "callout" || t === "tm" ? t : "daily";
     if (!r || r.type === next) return;
     const prevProj = (store.settings.projects || {})[r.type] || {};
     const nextProj = (store.settings.projects || {})[next] || {};
@@ -1746,6 +1809,9 @@ function onAct(e) {
   if (act === "start") start("daily", false, false);
   if (act === "new-daily") start("daily", false, true);
   if (act === "new-callout") start("callout", false, true);
+  if (act === "new-tm") start("tm", false, true);
+  if (act === "quotetoggle") { const r = active(); if (r) { patch({ quoted: !r.quoted }); render(); } }
+  if (act === "previewpdf") previewReport();
   if (act === "fromlast") start("daily", true, true);
   if (act === "home" || act === "done") {
     const r = active();
@@ -1810,7 +1876,7 @@ function jobOk() {
     toast("Project number and name are required.");
     return false;
   }
-  if (r.type === "callout" && !pad3(r.calloutNo)) {
+  if (hasWO(r) && !pad3(r.calloutNo)) {
     toast("Work order number is required. It goes in the file name.");
     return false;
   }
@@ -2493,7 +2559,7 @@ function describe(def, a, type) {
     if (String(a.name || "").trim()) out.push(String(a.name).trim());
     const span = a.start && a.end ? time12(a.start) + " - " + time12(a.end) : a.start ? "Start " + time12(a.start) : a.end ? "End " + time12(a.end) : "";
     const h = String(a.hrs || "").trim();
-    const hh = h ? (/[a-z]/i.test(h) ? h : h + " Hrs" + (type === "callout" ? (a.rate === "st" ? " ST" : " OT") : "")) : "";
+    const hh = h ? (/[a-z]/i.test(h) ? h : h + " Hrs" + (type === "callout" || type === "tm" ? (rateOf({ type: type }, a) === "st" ? " ST" : " OT") : "")) : "";
     if (span && hh) out.push(span + " (" + hh + ")");
     else if (span || hh) out.push(span || hh);
     if (note) out.push(note);
@@ -2521,7 +2587,7 @@ function reportText(r) {
     "STX CORPORATION — " + T.title,
     "Date: " + (formatLong(r.date) || r.date),
     "Project: " + [r.projectNumber, r.projectName].filter(Boolean).join(" "),
-    r.type === "callout" ? "Work order #: " + (pad3(r.calloutNo) || "—") : "",
+    hasWO(r) ? "Work order #: " + (pad3(r.calloutNo) || "—") + (r.quoted ? " (quoted work)" : "") : "",
     "Prepared by: " + (r.printName || "—"),
     SITE.addr1 + ", " + SITE.addr2,
     wx.length ? "Weather:" : "Weather: not recorded",
@@ -2538,7 +2604,7 @@ function calloutData(r) {
   return {
     v: 1, id: r.id, type: r.type, date: r.date, projectNumber: r.projectNumber, projectName: r.projectName, calloutNo: r.calloutNo,
     printName: r.printName, fileWho: r.fileWho, summary: r.summary, q: r.q, equipment: r.equipment, materials: r.materials,
-    createdAt: r.createdAt, updatedAt: r.updatedAt,
+    createdAt: r.createdAt, updatedAt: r.updatedAt, quoted: !!r.quoted,
   };
 }
 function toB64(obj) {
@@ -2907,11 +2973,11 @@ async function buildPdfCore(r, caps) {
   doc.setTextColor(NAVY[0], NAVY[1], NAVY[2]);
   doc.setFont("helvetica", "bold");
   doc.setFontSize(12);
-  doc.text(T.title, pageW - margin, 28, { align: "right" });
+  doc.text(T.title + (r.type === "tm" && r.quoted ? "  ·  QUOTED WORK" : ""), pageW - margin, 28, { align: "right" });
   doc.setFont("helvetica", "normal");
   doc.setFontSize(9);
   doc.text(dateLong, pageW - margin, 42, { align: "right" });
-  doc.text("Project # " + pdfText(r.projectNumber || "—") + (r.type === "callout" ? "  ·  Work Order # " + (pad3(r.calloutNo) || "—") : ""), pageW - margin, 53, { align: "right" });
+  doc.text("Project # " + pdfText(r.projectNumber || "—") + (hasWO(r) ? "  ·  Work Order # " + (pad3(r.calloutNo) || "—") : ""), pageW - margin, 53, { align: "right" });
   doc.setTextColor(MUTED[0], MUTED[1], MUTED[2]);
   doc.text(SITE.company + "  ·  " + SITE.phone, pageW - margin, 64, { align: "right" });
   doc.setFillColor(NAVY[0], NAVY[1], NAVY[2]);
@@ -3148,7 +3214,7 @@ async function buildPdfCore(r, caps) {
   }
   const props = { title: pdfText(title), subject: T.title, author: pdfText(r.printName || ""), creator: "STX Fairburn Report" };
   /* Callout PDFs carry their billing details (no photos or signature) so another phone or the office can add them to the month's billing. */
-  if (r.type === "callout") props.keywords = "STXFB1:" + calloutPayload(r);
+  if (hasWO(r)) props.keywords = "STXFB1:" + calloutPayload(r);
   doc.setProperties(props);
   return { blob: doc.output("blob"), reportPages: reportPages, totalPages: totalPages, jhaPages: jhaCount };
 }
@@ -3195,6 +3261,62 @@ function downloadBlob(blob, name) {
   a.remove();
 }
 
+/* Preview stays inside the app: the home-screen PDF viewer has no back button, so the pages are drawn here under a Back to report bar. */
+let previewDoc = null;
+let previewLive = "";
+function closePreview() {
+  const el = document.getElementById("pdfPreview");
+  if (el) el.remove();
+  document.body.style.overflow = "";
+  if (previewDoc && previewDoc.destroy) { try { previewDoc.destroy(); } catch (e) {} }
+  previewDoc = null;
+  if (previewLive) { try { URL.revokeObjectURL(previewLive); } catch (e) {} previewLive = ""; }
+}
+async function previewReport() {
+  const r = active();
+  if (!r) return;
+  const pack = preparedFiles;
+  if (!packMatches(pack, r)) { toast("Still preparing the PDF."); prepareSendFiles(); return; }
+  closePreview();
+  const url = URL.createObjectURL(pack.blob);
+  previewLive = url;
+  const root = document.createElement("div");
+  root.id = "pdfPreview";
+  root.className = "pdf-preview";
+  root.innerHTML = '<div class="pdf-bar"><button type="button" id="pdfBack">Back to report</button><span>' + esc(fileName(r)) + "</span></div>" +
+    '<div class="pdf-pages" id="pdfPages"><p class="hint" style="color:#efe6d2">Opening preview…</p></div>';
+  document.body.appendChild(root);
+  document.body.style.overflow = "hidden";
+  document.getElementById("pdfBack").addEventListener("click", closePreview);
+  const pages = document.getElementById("pdfPages");
+  try {
+    const lib = window.pdfjsLib;
+    if (!lib || !lib.getDocument) throw new Error("viewer");
+    lib.GlobalWorkerOptions.workerSrc = "./pdf.worker.min.js";
+    const doc = await lib.getDocument({ url: url }).promise;
+    previewDoc = doc;
+    if (!document.getElementById("pdfPreview")) return;
+    pages.innerHTML = "";
+    const cssWidth = Math.max(280, Math.min((window.innerWidth || 360) - 24, 720));
+    const ratio = Math.min(window.devicePixelRatio || 1, 2);
+    for (let i = 1; i <= doc.numPages; i += 1) {
+      if (!document.getElementById("pdfPreview")) return;
+      const page = await doc.getPage(i);
+      const base = page.getViewport({ scale: 1 });
+      const viewport = page.getViewport({ scale: (cssWidth / base.width) * ratio });
+      const canvas = document.createElement("canvas");
+      canvas.width = Math.floor(viewport.width);
+      canvas.height = Math.floor(viewport.height);
+      canvas.style.width = cssWidth + "px";
+      pages.appendChild(canvas);
+      await page.render({ canvasContext: canvas.getContext("2d"), viewport: viewport }).promise;
+    }
+  } catch (err) {
+    if (!document.getElementById("pdfPreview")) return;
+    pages.innerHTML = '<iframe title="Report PDF" src="' + url + '"></iframe>';
+  }
+}
+
 function downloadPdf() {
   const r = active();
   if (!r) return;
@@ -3213,7 +3335,7 @@ function downloadPdf() {
   markFinished(r);
   save();
   toast("Saved " + fileName(r) + ". Now tap Share PDF to send it.");
-  if (r.type === "callout") render();
+  if (hasWO(r)) render();
 }
 
 function packStamp(r) {
@@ -3240,9 +3362,10 @@ function showLayoutStatus(busy) {
 
 function setShareBusy(busy) {
   showLayoutStatus(busy);
-  document.querySelectorAll('[data-act="send"], [data-act="pdf"]').forEach((b) => {
+  document.querySelectorAll('[data-act="send"], [data-act="pdf"], [data-act="previewpdf"]').forEach((b) => {
+    const act = b.getAttribute("data-act");
     b.disabled = !!busy;
-    b.textContent = busy ? "Preparing PDF…" : (b.getAttribute("data-act") === "pdf" ? "Download PDF" : "Share PDF");
+    b.textContent = busy ? "Preparing PDF…" : (act === "pdf" ? "Download PDF" : act === "previewpdf" ? "Preview PDF" : "Share PDF");
   });
 }
 
@@ -3322,9 +3445,13 @@ function sendReport() {
   rememberSettings(r);
   save();
   copyP.then((ok) => { if (ok) toast("Office email copied. Paste it in To."); });
-  const payload = { title: mailSubject(r), files: [pack.pdfFile] };
+  /* the title is the file name, so the iPhone share sheet keeps "26002- 261016-015 Chris.pdf"; some shares only take the file */
+  const withTitle = { title: fileTitle(r), files: [pack.pdfFile] };
+  const filesOnly = { files: [pack.pdfFile] };
+  const can = (x) => { try { return !!(navigator.share && navigator.canShare && navigator.canShare(x)); } catch (e) { return false; } };
+  const payload = can(withTitle) ? withTitle : filesOnly;
   try {
-    if (navigator.share && navigator.canShare && navigator.canShare(payload)) {
+    if (can(payload)) {
       navigator.share(payload).then(() => {
         markFinished(r);
         askSent = true;
