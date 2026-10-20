@@ -1,7 +1,7 @@
 /* STX Fairburn Report — daily project report and callout report in one app.
    Built as a sibling of stx-daily-summary: same storage, photo, signature, weather and share plumbing. */
 const DEFAULT_EMAIL = "reports@stxrailroad.com";
-const APP_VERSION = "7";
+const APP_VERSION = "9";
 const KEY = "stx-fairburn-v1";
 const DB_NAME = "stx-fairburn";
 const PHOTO_STORE = "photos";
@@ -39,14 +39,9 @@ const TYPES = {
     project: "26001",
     projectName: "CSX Intermodal GA",
     crewStep: "Crew",
-    crewTitle: "Crew consist and work hours",
-    crewHint: "List start time and end time for each class on site.",
-    crew: [
-      { id: "c_super", kind: "crew", q: "Superintendent - Hours", short: "Superintendent" },
-      { id: "c_foreman", kind: "crew", q: "Foreman / Inspector - Hours", short: "Foreman / Inspector" },
-      { id: "c_oper", kind: "crew", q: "Operator - Hours", short: "Operator" },
-      { id: "c_labor", kind: "crew", q: "Laborer - Hours", short: "Laborer" },
-    ],
+    crewTitle: "",
+    crewHint: "",
+    crew: [],
     safety: [SAFETY.brief, SAFETY.injury, SAFETY.locks, SAFETY.switches, SAFETY.parked, SAFETY.secure],
   },
   tm: {
@@ -57,14 +52,9 @@ const TYPES = {
     project: "26002",
     projectName: "CSX Fairburn Extra Work GA",
     crewStep: "Crew",
-    crewTitle: "Crew consist and work hours",
-    crewHint: "List start time and end time for each class on site.",
-    crew: [
-      { id: "c_super", kind: "crew", q: "Superintendent - Hours", short: "Superintendent" },
-      { id: "c_foreman", kind: "crew", q: "Foreman / Inspector - Hours", short: "Foreman / Inspector" },
-      { id: "c_oper", kind: "crew", q: "Operator - Hours", short: "Operator" },
-      { id: "c_labor", kind: "crew", q: "Laborer - Hours", short: "Laborer" },
-    ],
+    crewTitle: "",
+    crewHint: "",
+    crew: [],
     safety: [SAFETY.brief, SAFETY.injury, SAFETY.locks, SAFETY.switches, SAFETY.parked, SAFETY.secure],
   },
   callout: {
@@ -75,23 +65,45 @@ const TYPES = {
     project: "26002",
     projectName: "CSX Fairburn Extra Work GA",
     crewStep: "Callout",
-    crewTitle: "Summary checklist / classifications",
-    crewHint: "When the call came in, when you got on site, and who worked it.",
+    crewTitle: "Callout summary",
+    crewHint: "When the call came in and when you got on site.",
     crew: [
       { id: "k_called", kind: "time", timeLabel: "Call received", q: "Called out? What time was call received?", short: "Called out" },
       { id: "k_visit", kind: "time", timeLabel: "Arrived onsite", q: "Site visit required? Time arrived onsite:", short: "Site visit" },
-      { id: "k_pm", kind: "crew", q: "Project Manager - Name / Hours", short: "Project Manager" },
-      { id: "c_foreman", kind: "crew", q: "Inspector - Name / Hours", short: "Inspector" },
-      { id: "c_oper", kind: "crew", q: "Operator - Name / Hours", short: "Operator" },
-      { id: "c_labor", kind: "crew", q: "Laborer - Name / Hours", short: "Laborer" },
     ],
     safety: [SAFETY.brief, SAFETY.injury, SAFETY.locks, SAFETY.parked, SAFETY.secure, SAFETY.csx],
   },
 };
+/* Crew classes in the drop-down on every report. "old" is the crew question id used before version 8, for converting old reports. */
+const CREW_CLASSES = [
+  { key: "foreman", label: "Foreman", old: "c_foreman" },
+  { key: "oper", label: "Operator", old: "c_oper" },
+  { key: "labor", label: "Laborer", old: "c_labor" },
+  { key: "super", label: "Superintendent", old: "c_super" },
+  { key: "pm", label: "Project Manager", old: "k_pm" },
+];
+function crewLabel(key) {
+  const c = CREW_CLASSES.find((x) => x.key === key);
+  return c ? c.label : "";
+}
+function crewNum(v) {
+  const n = parseFloat(String(v == null ? "" : v).replace(/,/g, ""));
+  return isFinite(n) ? n : 0;
+}
+/* man-hours on one crew row: how many people x hours each (QTY left blank counts as 1) */
+function crewHours(row) {
+  return Math.round((crewNum(row.qty) || 1) * crewNum(row.hours) * 100) / 100;
+}
+function usedCrew(r) {
+  return (r.crew || []).filter((x) => x.cls && CREW_CLASSES.some((c) => c.key === x.cls));
+}
+function crewTotal(r) {
+  return Math.round(usedCrew(r).reduce((sum, x) => sum + crewHours(x), 0) * 100) / 100;
+}
 const STEP_COUNT = 7;
 const STEP = { JOB: 0, WORK: 1, MATERIALS: 2, CREW: 3, SAFETY: 4, PHOTOS: 5, SEND: 6 };
 const MATERIAL_UOM = ["EA", "LF", "TF", "TN", "CY", "GAL", "BAG", "BDL", "LB", "SF", "SY"];
-/* Equipment names line up with the equipment columns of the T&M billing worksheet (col = its column letter),
+/* Equipment names in the picker (col was the billing worksheet column, kept for reference),
    most used at Fairburn first. Two names may share a column when the worksheet bills them at one rate. */
 const EQUIPMENT = [
   { name: "Crew Truck", col: "E" },
@@ -183,6 +195,7 @@ const pad3 = (v) => {
 const emptyRow = {
   materials: () => ({ id: uid(), description: "", qty: "", uom: "" }),
   equipment: () => ({ id: uid(), name: "", qty: "", hours: "" }),
+  crew: () => ({ id: uid(), cls: "", qty: "", hours: "", rate: "" }),
 };
 
 function freshSettings() {
@@ -193,8 +206,6 @@ function freshSettings() {
     defaultEmail: DEFAULT_EMAIL,
     lastCallout: 0,
     lastCalloutMonth: "",
-    billingTemplate: null,
-    billingMonths: {},
     photosPerPage: 1,
     projects: {
       daily: { num: TYPES.daily.project, name: TYPES.daily.projectName },
@@ -204,7 +215,7 @@ function freshSettings() {
   };
 }
 
-/* The -007 on a callout is the work order the callout bills to. Callouts in the same month normally share one,
+/* The -007 on a callout is its work order. Callouts in the same month normally share one,
    so a new callout reuses the last number used this month and otherwise starts from the month number. */
 function defaultWorkOrder(s, date) {
   const month = String(date || "").slice(0, 7);
@@ -240,6 +251,7 @@ function blankReport(settings, type) {
     q: {},
     materials: [emptyRow.materials()],
     equipment: [emptyRow.equipment()],
+    crew: [emptyRow.crew()],
     jha: { on: false, front: null, back: null },
     layout: { ppp: [1, 2, 4].indexOf(Number(s.photosPerPage)) >= 0 ? Number(s.photosPerPage) : 1 },
     photos: [],
@@ -326,6 +338,18 @@ function fillReport(r) {
   if (!Array.isArray(r.materials) || !r.materials.length) r.materials = [emptyRow.materials()];
   if (!r.jha || typeof r.jha !== "object") r.jha = { on: false, front: null, back: null };
   if (!Array.isArray(r.equipment) || !r.equipment.length) r.equipment = [emptyRow.equipment()];
+  if (!Array.isArray(r.crew)) {
+    /* before version 8 each class was a Yes / No question with a name and hours: one person per class */
+    r.crew = [];
+    CREW_CLASSES.forEach((c) => {
+      const a = r.q[c.old];
+      if (!a) return;
+      if (a.a !== "yes" && !String(a.hrs || "").trim()) return;
+      r.crew.push({ id: uid(), cls: c.key, qty: "1", hours: String(a.hrs || "").trim(), rate: a.rate === "st" || a.rate === "ot" ? a.rate : "" });
+    });
+  }
+  r.crew = r.crew.filter((x) => x && typeof x === "object").map((x) => ({ id: x.id || uid(), cls: x.cls || "", qty: x.qty == null ? "" : String(x.qty), hours: x.hours == null ? "" : String(x.hours), rate: x.rate === "st" || x.rate === "ot" ? x.rate : "" }));
+  if (!r.crew.length) r.crew = [emptyRow.crew()];
   if (!Array.isArray(r.wxManual) || r.wxManual.length !== SLOT_TIMES.length) r.wxManual = blankManual();
   if (!r.wx || typeof r.wx !== "object") r.wx = null;
   ["projectNumber", "projectName", "calloutNo", "printName", "fileWho", "summary", "pdfTitle", "signatureDataUrl"].forEach((k) => {
@@ -414,7 +438,7 @@ function patch(p) {
 function typeOf(r) {
   return TYPES[r && TYPES[r.type] ? r.type : "daily"];
 }
-/* callouts and planned T&M carry a work order number and are billed */
+/* callouts and planned T&M carry a work order number */
 function hasWO(r) {
   return !!r && (r.type === "callout" || r.type === "tm");
 }
@@ -478,7 +502,7 @@ function render() {
   teardownSig();
   const app = document.getElementById("app");
   if (!app) return;
-  app.innerHTML = screen === "home" ? homeHtml() : screen === "billing" ? billingScreenHtml() : wizardHtml();
+  app.innerHTML = screen === "home" ? homeHtml() : wizardHtml();
   bind();
   if (focusId) {
     const next = document.getElementById(focusId);
@@ -544,7 +568,6 @@ function homeHtml() {
     '<button class="btn btn-gold" data-act="new-callout">Start a callout report</button>' +
     '<button class="btn btn-outline" data-act="new-tm">Start a planned T&amp;M report</button>' +
     (lastDaily ? '<button class="btn btn-outline" data-act="fromlast">New daily from last crew</button>' : "") +
-    '<button class="btn btn-outline" data-act="billing">Billing</button>' +
     '<div style="height:14px"></div>' +
     group("Drafts", drafts, "No drafts. Start a report for the shift.") +
     group("Sent", sent, "Sent reports land here after you share them.") +
@@ -966,16 +989,7 @@ function qText(id, value, ph) {
 function questionHtml(r, def) {
   const a = r.q[def.id] || {};
   let h = '<div class="item"><label>' + esc(def.q) + "</label>" + ynaRow(def, a.a || "");
-  if (def.kind === "crew") {
-    h += field("Name", qInput(def.id, "name", a.name, 'placeholder="Who" autocapitalize="words"')) +
-      splitRow(field("Start", qInput(def.id, "start", a.start, 'type="time"')), field("End", qInput(def.id, "end", a.end, 'type="time"'))) +
-      splitRow(field("Hours", qInput(def.id, "hrs", a.hrs, 'inputmode="decimal" placeholder="10"')), field("Notes", qInput(def.id, "d", a.d, 'placeholder="Optional"'))) +
-      (hasWO(r)
-        ? "<label>Bill these hours as</label>" +
-          '<div class="kind"><button type="button" data-rate="' + def.id + '" data-v="st" class="' + (rateOf(r, a) === "st" ? "on" : "") + '">Straight time</button>' +
-          '<button type="button" data-rate="' + def.id + '" data-v="ot" class="' + (rateOf(r, a) === "ot" ? "on" : "") + '">Overtime</button></div>'
-        : "");
-  } else if (def.kind === "time") {
+  if (def.kind === "time") {
     h += field(def.timeLabel, qInput(def.id, "time", a.time, 'type="time"')) +
       field("Description", qText(def.id, a.d, ""));
   } else {
@@ -996,9 +1010,9 @@ function stepHtml(r) {
       (r.type === "callout" ? field("Work order number", input("calloutNo", r.calloutNo, 'placeholder="007" inputmode="numeric" maxlength="4"')) + '<p class="hint">The -007 in the file name. Callouts billed together share it.</p>' : "") +
       (r.type === "tm"
         ? field("T&amp;M work order number", input("calloutNo", r.calloutNo, 'placeholder="015" inputmode="numeric" maxlength="4"')) +
-          '<p class="hint">Every day of this job uses the same work order, so they all go on one billing sheet.</p>' +
-          '<button type="button" class="check-row' + (r.quoted ? " on" : "") + '" data-act="quotetoggle" style="margin-top:8px"><span class="box">' + (r.quoted ? "✓" : "") + "</span>Already quoted (billed off the quote)</button>" +
-          (r.quoted ? '<p class="hint">Quoted work gets the report only. No T&amp;M billing sheet is built for this work order.</p>' : "")
+          '<p class="hint">Every day of this job uses the same work order.</p>' +
+          '<button type="button" class="check-row' + (r.quoted ? " on" : "") + '" data-act="quotetoggle" style="margin-top:8px"><span class="box">' + (r.quoted ? "✓" : "") + "</span>Quoted work</button>" +
+          (r.quoted ? '<p class="hint">The PDF title says QUOTED WORK.</p>' : "")
         : "") +
       field("Project number", input("projectNumber", r.projectNumber, 'placeholder="Project number" inputmode="numeric"')) +
       field("Project name", input("projectName", r.projectName, 'placeholder="Project name"')) +
@@ -1017,9 +1031,9 @@ function stepHtml(r) {
   }
   if (step === STEP.MATERIALS) return materialsHtml(r);
   if (step === STEP.CREW) {
-    return '<div class="card"><h2>' + T.crewTitle + "</h2>" +
-      '<p class="hint">' + T.crewHint + " Hours fill in from start and end. Type over them if lunch comes out.</p>" +
-      T.crew.map((d) => questionHtml(r, d)).join("") + "</div>";
+    return (T.crew.length
+      ? '<div class="card"><h2>' + T.crewTitle + "</h2>" + '<p class="hint">' + T.crewHint + "</p>" + T.crew.map((d) => questionHtml(r, d)).join("") + "</div>"
+      : "") + crewHtml(r);
   }
   if (step === STEP.SAFETY) {
     return '<div class="card"><h2>Safety checklist</h2>' + T.safety.map((d) => questionHtml(r, d)).join("") + "</div>";
@@ -1065,7 +1079,6 @@ function stepHtml(r) {
     '<button class="btn btn-outline" data-act="previewpdf" disabled>Preparing PDF…</button>' +
     '<button class="btn btn-gold" data-act="pdf" disabled>Preparing PDF…</button>' +
     '<button class="btn btn-navy" data-act="send" disabled>Preparing PDF…</button></div>' +
-    (hasWO(r) ? billingSendHtml(r) : "") +
     (askSent
       ? '<div class="card"><h2>Did the email go out?</h2>' +
         '<p class="hint">Only mark it sent after the office actually gets it.</p>' +
@@ -1107,6 +1120,30 @@ function materialsHtml(r) {
       ) + "</div>").join("") +
     '<button class="btn btn-ghost" data-add="equipment">Add equipment</button></div>';
 }
+function crewHtml(r) {
+  const opts = (sel) => '<option value="">Pick a class</option>' +
+    CREW_CLASSES.map((c) => '<option value="' + c.key + '"' + (sel === c.key ? " selected" : "") + ">" + c.label + "</option>").join("");
+  return '<div class="card"><h2>Crew and work hours</h2>' +
+    '<p class="hint">Pick each class that worked, how many, and the hours each one worked. Add a line for each class' +
+    (hasWO(r) ? ", or for the same class on overtime" : "") + ".</p>" +
+    r.crew.map((row) => '<div class="item">' + rowTop("Class", "crew", row) +
+      '<select id="row-' + row.id + '-cls" data-row="crew" data-id="' + row.id + '" data-f="cls">' + opts(row.cls) + "</select>" +
+      splitRow(
+        field("QTY", rowInput("crew", row, "qty", 'inputmode="decimal" placeholder="1"')),
+        field("Hours each", rowInput("crew", row, "hours", 'inputmode="decimal" placeholder="10"'))
+      ) +
+      (hasWO(r)
+        ? "<label>Straight time or overtime</label>" +
+          '<div class="kind"><button type="button" data-crewrate="' + row.id + '" data-v="st" class="' + (rateOf(r, row) === "st" ? "on" : "") + '">Straight time</button>' +
+          '<button type="button" data-crewrate="' + row.id + '" data-v="ot" class="' + (rateOf(r, row) === "ot" ? "on" : "") + '">Overtime</button></div>'
+        : "") + "</div>").join("") +
+    '<button class="btn btn-ghost" data-add="crew">Add another class</button>' +
+    '<p class="hint" id="crewTotal">' + crewTotalText(r) + "</p></div>";
+}
+function crewTotalText(r) {
+  const t = crewTotal(r);
+  return t ? "Total: <b>" + t + " man-hours</b>" : "";
+}
 function usedMaterials(r) {
   return (r.materials || []).filter((x) => String(x.description || "").trim());
 }
@@ -1131,9 +1168,6 @@ function addEquipment(name) {
   }
 }
 
-/* ---------- monthly callout billing (the billing sheet logic is in billing.js) ---------- */
-let billResult = null;
-let billBusy = "";
 
 const MON_SHORT = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 function shortDate(iso) {
@@ -1141,395 +1175,11 @@ function shortDate(iso) {
   return m ? MON_SHORT[Number(m[2]) - 1] + " " + Number(m[3]) : "";
 }
 
-/* A report is finished once its PDF has been shared or saved, or it is marked sent. That puts it on the month's billing. */
+/* A report is finished once its PDF has been shared or saved, or it is marked sent. */
 function markFinished(r) {
   if (!r || r.finishedAt) return;
   r.finishedAt = new Date().toISOString();
   save();
-}
-
-function billingTemplateHtml() {
-  const t = store.settings.billingTemplate;
-  const current = typeof billingTemplateCurrent === "function" && billingTemplateCurrent();
-  return '<input id="billingFile" type="file" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" hidden />' +
-    (t && current
-      ? '<p class="hint">Billing sheet on this phone: <b>' + esc(t.name) + "</b>. Rates and formulas come from it.</p>" +
-        '<button class="btn btn-ghost" data-act="billfile">Replace billing sheet</button>'
-      : (t ? '<p class="hint"><b>The billing sheet on this phone is the old layout.</b> Load the updated 26002 BILLING SHEET.</p>'
-           : '<p class="hint">Load the office billing sheet (.xlsx) once. It stays on this phone and is never uploaded, so the rates stay private. Any filled copy works; the old entries are cleared.</p>') +
-        '<button class="btn btn-outline" data-act="billfile">Load billing sheet</button>');
-}
-
-function monthStats(g) {
-  const data = collectBilling(g.done);
-  return data.days.length + (data.days.length === 1 ? " day" : " days") + " · " +
-    data.manHours + " man-hrs · " + data.equipHours + " equip hrs" +
-    (data.materials.length ? " · " + data.materials.length + (data.materials.length === 1 ? " material" : " materials") : "");
-}
-
-function monthState(g) {
-  const thisMonth = todayISO().slice(0, 7);
-  if (g.kind === "tm") {
-    if (g.quoted) return { tag: "Quoted", cls: "", button: "" };
-    if (g.record) return { tag: "Exported " + shortDate(g.record.exportedAt.slice(0, 10)), cls: "", button: g.changed ? "Export updated sheet" : "Export again" };
-    return { tag: "Open", cls: "", button: "Job complete · export" };
-  }
-  if (g.record) return { tag: "Exported " + shortDate(g.record.exportedAt.slice(0, 10)), cls: "", button: g.changed ? "Export updated sheet" : "Export again" };
-  if (g.month < thisMonth) return { tag: "Ready to export", cls: " callout", button: "Month complete · export" };
-  return { tag: "Open", cls: "", button: "Export so far" };
-}
-
-function calloutLine(r) {
-  const d = collectBilling([r]);
-  return '<div class="list-row" style="padding:7px 0"><div><b>' + esc(shortDate(r.date)) + "</b> · " + esc(r.printName || "No name") +
-    '<div class="muted">' + d.manHours + " man-hrs · " + d.equipHours + " equip hrs" + (r.imported ? " · added from PDF" : " · this phone") + "</div></div>" +
-    (r.imported ? '<button class="btn btn-danger" style="width:auto;margin:0;padding:6px 10px;font-size:12px" data-unimport="' + esc(r.id) + '">Remove</button>' : "") +
-    "</div>";
-}
-
-function billingMonthHtml(g) {
-  const st = monthState(g);
-  const busy = billBusy === g.key;
-  const ready = typeof billingTemplateCurrent === "function" && billingTemplateCurrent();
-  const what = g.kind === "tm" ? "day" : "callout";
-  return '<div class="item"><div class="item-top"><b>' + esc(groupLabel(g)) + '</b><span class="tag' + st.cls + '">' + esc(st.tag) + "</span></div>" +
-    '<div class="muted">Job ' + esc(g.project + "-" + monthWorkOrder(g)) + " · " + (g.done.length ? esc(monthStats(g)) : "nothing finished yet") + "</div>" +
-    (g.done.length ? '<div style="margin-top:6px">' + g.done.map(calloutLine).join("") + "</div>" : "") +
-    (g.kind === "tm" && g.quoted ? '<p class="hint" style="margin:6px 0 0"><b>Already quoted:</b> billed off the quote, so no T&amp;M billing sheet is built for this work order.</p>' : "") +
-    (g.drafts.length ? '<p class="hint" style="margin:6px 0 0">' + g.drafts.length + " " + what + (g.drafts.length === 1 ? "" : "s") + " (" + esc(g.drafts.map((r) => shortDate(r.date)).join(", ")) +
-      ") not finished. Download or share the report and it is added.</p>" : "") +
-    (g.changed ? '<p class="hint" style="margin:6px 0 0"><b>Reports were added or changed since the last export.</b></p>' : "") +
-    (g.done.some((r) => !r.imported)
-      ? '<button class="btn btn-outline" data-bundle="' + esc(g.key) + '">Share my ' + (g.kind === "tm" ? "T&amp;M days" : "callouts") + " (AirDrop)</button>" : "") +
-    (g.done.length && !(g.kind === "tm" && g.quoted)
-      ? (ready
-        ? '<button class="btn btn-navy" data-bill="' + esc(g.key) + '"' + (billBusy ? " disabled" : "") + ">" + (busy ? "Building…" : esc(st.button)) + "</button>"
-        : '<p class="hint" style="margin:8px 0 0"><b>Load the billing sheet above to export.</b></p>')
-      : "") +
-    "</div>" + billingResultHtml(g);
-}
-
-function billingResultHtml(g) {
-  const b = billResult;
-  if (!b || b.key !== g.key) return "";
-  const ids = g.done.map((r) => r.id).join("|");
-  if (b.ids.join("|") !== ids || g.done.some((r) => (r.updatedAt || "") > b.builtAt)) return "";
-  return '<div class="item" style="border-color:var(--brass)"><b>Billing sheet ready</b>' +
-    b.files.map((f) => '<span class="filetag">' + esc(f.name) + "</span>").join("") +
-    '<p class="hint">Filled in: ' + esc(b.summary) + ".</p>" +
-    (b.warnings.length ? '<p class="hint"><b>Check before it goes out</b></p><ul class="hint" style="margin:0 0 10px;padding-left:18px">' + b.warnings.map((w) => "<li>" + esc(w) + "</li>").join("") + "</ul>" : "") +
-    '<p class="hint">Share sends it to Mail or Save to Files. Open shows it on screen, with its own share button.</p>' +
-    '<button class="btn btn-gold" data-act="billshare">Share billing sheet</button>' +
-    '<button class="btn btn-outline" data-act="billopen">Open billing sheet</button>' +
-    '<button class="btn btn-ghost" data-act="billsave">Download billing sheet</button></div>';
-}
-
-let importNote = "";
-
-function billingScreenHtml() {
-  const months = typeof billingMonths === "function" ? billingMonths() : [];
-  const jobs = typeof billingJobs === "function" ? billingJobs() : [];
-  return '<header class="hero" style="padding-bottom:14px"><div class="brand">' + markSvg() +
-    "<div><small>Billing</small></div>" +
-    '<button type="button" class="homebtn" data-act="home">Home</button></div>' +
-    '<div class="muted" style="color:rgba(255,252,245,.75);margin-top:8px">Billed by the month · CSX Fairburn</div></header>' +
-    '<main class="content">' +
-    '<div class="card"><h2>Billing sheet</h2>' + billingTemplateHtml() + "</div>" +
-    '<div class="card"><h2>Add callouts</h2>' +
-    '<p class="hint"><b>From your partner:</b> they tap <b>Share my callouts (AirDrop)</b> under the month below and AirDrop it to you. Save it to Files, then pick it with the box below. Their whole month is added at once, and nothing is ever added twice.</p>' +
-    '<p class="hint"><b>From Dropbox:</b> every callout PDF made with this app carries its billing details, so the month builds itself from the PDFs already filed.</p>' +
-    '<p class="hint"><b>Office computer:</b> drag the callout PDFs, or the whole month\'s folder, from Dropbox onto the box. <b>iPhone:</b> tap the box, then Browse › Dropbox and pick the PDFs.</p>' +
-    '<input id="importPdf" type="file" accept="application/pdf,.pdf,.xlsx" multiple hidden />' +
-    '<button type="button" class="drop" id="dropZone" data-act="importpdf">Drop callout PDFs or a folder here<small>or tap to pick files · the billing sheet .xlsx can go in too</small></button>' +
-    (importNote ? '<p class="hint" style="margin-top:10px">' + importNote + "</p>" : "") + "</div>" +
-    '<div class="card"><h2>Callouts by month</h2>' +
-    '<p class="hint">Each finished callout is added to its month. When the month is done, export the billing sheet.</p>' +
-    (months.length ? months.slice(0, 8).map(billingMonthHtml).join("") : '<p class="empty">Finished callout reports show up here by month.</p>') +
-    "</div>" +
-    '<div class="card"><h2>Planned T&amp;M jobs</h2>' +
-    '<p class="hint">Each planned T&amp;M work order gets its own billing sheet, with every day of the job on it. Quoted jobs are listed but not billed here.</p>' +
-    (jobs.length ? jobs.slice(0, 10).map(billingMonthHtml).join("") : '<p class="empty">Planned T&amp;M reports show up here by work order.</p>') +
-    "</div>" +
-    '<div class="nav"><button class="btn btn-ghost" data-act="home">Home</button><span></span></div></main>';
-}
-
-function billingSendHtml(r) {
-  if (r.type === "tm") {
-    const job = String(r.projectNumber || "").trim() + "-" + (pad3(r.calloutNo) || "—");
-    return '<div class="card"><h2>T&amp;M billing · ' + esc(job) + "</h2>" +
-      (r.quoted
-        ? '<p class="hint"><b>Already quoted.</b> No T&amp;M billing sheet is built for this work order.</p>'
-        : reportFinished(r)
-          ? '<p class="hint"><b>This day is on the ' + esc(job) + " billing sheet.</b> Export it from Billing when the job is done.</p>"
-          : '<p class="hint">This day goes on the ' + esc(job) + " billing sheet as soon as you download or share the PDF.</p>") +
-      '<button class="btn btn-ghost" data-act="billing">Open billing</button></div>';
-  }
-  const label = monthLabel(String(r.date || "").slice(0, 7));
-  const finished = reportFinished(r);
-  return '<div class="card"><h2>' + esc(label) + " billing</h2>" +
-    (finished
-      ? '<p class="hint"><b>This callout is on the ' + esc(label) + " billing.</b></p>"
-      : '<p class="hint">This callout goes on the ' + esc(label) + " billing as soon as you download or share the PDF.</p>") +
-    '<button class="btn btn-ghost" data-act="billing">Open callout billing</button></div>';
-}
-
-/* ---------- callouts from other phones, carried inside their PDFs ---------- */
-async function readCalloutPdf(file) {
-  const buf = new Uint8Array(await file.arrayBuffer());
-  let text = "";
-  for (let i = 0; i < buf.length; i += 8192) text += String.fromCharCode.apply(null, buf.subarray(i, i + 8192));
-  const m = text.match(/\/Keywords \(STXFB([12]):([A-Za-z0-9+\/=]+)\)/);
-  if (!m) return null;
-  const bin = atob(m[2]);
-  const bytes = new Uint8Array(bin.length);
-  for (let i = 0; i < bin.length; i += 1) bytes[i] = bin.charCodeAt(i);
-  const data = JSON.parse(new TextDecoder().decode(bytes));
-  return m[1] === "2" ? (Array.isArray(data.callouts) ? data.callouts : []) : [data];
-}
-
-async function onImportPdfs(e) {
-  const files = Array.prototype.slice.call(e.target.files || []);
-  e.target.value = "";
-  await importFiles(files);
-}
-
-/* Reads every file in a dropped folder (and its sub-folders). */
-function filesFromEntry(entry) {
-  return new Promise((resolve) => {
-    if (!entry) { resolve([]); return; }
-    if (entry.isFile) { entry.file((f) => resolve([f]), () => resolve([])); return; }
-    if (!entry.isDirectory) { resolve([]); return; }
-    const reader = entry.createReader();
-    const all = [];
-    const next = () => reader.readEntries(async (batch) => {
-      if (!batch.length) {
-        const nested = await Promise.all(all.map(filesFromEntry));
-        resolve([].concat.apply([], nested));
-        return;
-      }
-      all.push.apply(all, batch);
-      next();
-    }, () => resolve([]));
-    next();
-  });
-}
-
-async function onDropFiles(ev) {
-  ev.preventDefault();
-  const zone = document.getElementById("dropZone");
-  if (zone) zone.classList.remove("over");
-  const dt = ev.dataTransfer;
-  if (!dt) return;
-  let files = [];
-  const items = dt.items ? Array.prototype.slice.call(dt.items) : [];
-  const entries = items.map((it) => (it.webkitGetAsEntry ? it.webkitGetAsEntry() : null)).filter(Boolean);
-  if (entries.length) {
-    const lists = await Promise.all(entries.map(filesFromEntry));
-    files = [].concat.apply([], lists);
-  } else files = Array.prototype.slice.call(dt.files || []);
-  await importFiles(files);
-}
-
-async function importFiles(all) {
-  const files = all.filter((f) => /\.pdf$/i.test(f.name) || f.type === "application/pdf");
-  const sheets = all.filter((f) => /\.xlsx$/i.test(f.name));
-  if (!files.length && !sheets.length) { importNote = "No PDFs found in what was dropped."; render(); return; }
-  let sheetNote = "";
-  if (sheets.length) {
-    if (billingTemplateCurrent()) sheetNote = "Billing sheet already loaded; the .xlsx was skipped.";
-    else {
-      try { await saveBillingTemplate(sheets[0]); sheetNote = "<b>Billing sheet loaded</b> from " + esc(sheets[0].name) + "."; }
-      catch (err) { sheetNote = "<b>" + esc(sheets[0].name) + ":</b> " + esc((err && err.message) || "could not be read") + "."; }
-    }
-  }
-  if (!files.length) { importNote = sheetNote; render(); return; }
-  importNote = "Reading " + files.length + " PDF" + (files.length === 1 ? "" : "s") + "…";
-  render();
-  const out = { added: [], updated: [], same: 0, own: 0, daily: 0, bad: [] };
-  for (let i = 0; i < files.length; i += 1) {
-    const f = files[i];
-    let recs = null;
-    try { recs = await readCalloutPdf(f); } catch (err) { recs = null; }
-    if (!recs || !recs.length) { out.bad.push(f.name); continue; }
-    for (let ri = 0; ri < recs.length; ri += 1) {
-    const d = recs[ri];
-    if (!d || !d.id || !d.date) continue;
-    if (d.type !== "callout" && d.type !== "tm") { out.daily += 1; continue; }
-    const have = store.reports[d.id];
-    if (have && !have.imported) { out.own += 1; continue; }
-    if (have && String(have.updatedAt || "") >= String(d.updatedAt || "")) { out.same += 1; continue; }
-    const now = new Date().toISOString();
-    const r = blankReport(store.settings, d.type);
-    Object.assign(r, {
-      id: d.id, date: d.date, projectNumber: d.projectNumber || "", projectName: d.projectName || "", calloutNo: d.calloutNo || "",
-      printName: d.printName || "", fileWho: d.fileWho || "", summary: d.summary || "", q: d.q || {},
-      equipment: d.equipment || [], materials: d.materials || [], createdAt: d.createdAt || now, updatedAt: d.updatedAt || now,
-      quoted: !!d.quoted, status: "sent", sentAt: now, finishedAt: now, imported: true, importedFrom: f.name, photos: [], signatureDataUrl: "",
-    });
-    fillReport(r);
-    store.reports[r.id] = r;
-    if (!have) store.order.push(r.id);
-    (have ? out.updated : out.added).push(shortDate(r.date) + " " + (r.printName || ""));
-    }
-  }
-  save();
-  const parts = [];
-  if (out.added.length) parts.push("<b>Added " + out.added.length + ":</b> " + esc(out.added.join(", ")) + ".");
-  if (out.updated.length) parts.push("<b>Updated " + out.updated.length + ":</b> " + esc(out.updated.join(", ")) + ".");
-  if (out.same) parts.push(out.same + " already added.");
-  if (out.own) parts.push(out.own + " already on this phone.");
-  if (out.daily) parts.push(out.daily + " daily report" + (out.daily === 1 ? "" : "s") + " skipped (only callouts are billed).");
-  if (out.bad.length) parts.push("Skipped " + out.bad.length + " PDF" + (out.bad.length === 1 ? "" : "s") + " with no callout data (daily reports, PDFs from before version 4, or PDFs re-saved by another app): " + esc(out.bad.slice(0, 5).join(", ") + (out.bad.length > 5 ? " and " + (out.bad.length - 5) + " more" : "")) + ".");
-  if (sheetNote) parts.unshift(sheetNote);
-  importNote = parts.join(" ");
-  render();
-}
-
-/* One small PDF with this phone's finished callouts for the month: a readable list, plus the billing details
-   for every callout so the partner's app can add them all at once. Made for AirDrop between the Fairburn crew. */
-async function shareMonthBundle(key) {
-  const g = allBillingGroups().find((x) => x.key === key);
-  const mine = g ? g.done.filter((r) => !r.imported) : [];
-  if (!mine.length) { toast("Nothing finished of yours here to share."); return; }
-  if (!window.jspdf) { toast("PDF library still loading — try again."); return; }
-  const who = String(store.settings.defaultName || mine[0].printName || "").trim();
-  const first = String(store.settings.fileWho || who.split(/\s+/)[0] || "crew").trim();
-  const name = (g.kind === "tm" ? g.project + "-" + g.wo + " T&M days " + first : g.project + " callouts " + monthLabel(g.month) + " " + first).replace(/[\\/:*?"<>|]/g, "-") + ".pdf";
-  const { jsPDF } = window.jspdf;
-  const doc = new jsPDF({ unit: "pt", format: "letter" });
-  const M = 40;
-  doc.setFillColor(12, 35, 64);
-  doc.rect(0, 0, 612, 56, "F");
-  doc.setTextColor(255, 252, 245);
-  doc.setFont("helvetica", "bold");
-  doc.setFontSize(15);
-  doc.text(pdfText((g.kind === "tm" ? "Planned T&M days to add · WO " + g.wo : "Callouts to add · " + monthLabel(g.month))), M, 26);
-  doc.setFont("helvetica", "normal");
-  doc.setFontSize(10);
-  doc.text(pdfText("Project " + g.project + "  ·  from " + (who || first) + "  ·  " + mine.length + (mine.length === 1 ? " report" : " reports")), M, 43);
-  doc.setTextColor(20, 32, 51);
-  doc.setFontSize(10);
-  let y = 80;
-  doc.text(pdfText("To add these to the billing: open the Fairburn app, tap Billing, then Add callouts and pick this file."), M, y, { maxWidth: 532 });
-  y += 30;
-  doc.setFont("helvetica", "bold");
-  doc.setFontSize(9);
-  doc.text("Date", M, y); doc.text("WO", M + 70, y); doc.text("Man-hrs", M + 110, y); doc.text("Equip hrs", M + 160, y); doc.text("Work", M + 220, y);
-  y += 6;
-  doc.setDrawColor(196, 188, 168);
-  doc.line(M, y, 572, y);
-  doc.setFont("helvetica", "normal");
-  mine.forEach((r) => {
-    const d = collectBilling([r]);
-    const lines = doc.splitTextToSize(pdfText(String(r.summary || "").trim() || "—"), 352).slice(0, 3);
-    if (y + 14 + lines.length * 11 > 740) { doc.addPage(); y = 50; }
-    y += 14;
-    doc.text(usDate(r.date), M, y);
-    doc.text(pad3(r.calloutNo) || "—", M + 70, y);
-    doc.text(String(d.manHours), M + 110, y);
-    doc.text(String(d.equipHours), M + 160, y);
-    doc.text(lines, M + 220, y);
-    y += (lines.length - 1) * 11 + 4;
-    doc.line(M, y + 2, 572, y + 2);
-  });
-  doc.setProperties({
-    title: pdfText(name.replace(/\.pdf$/, "")), subject: "Fairburn callouts to add", creator: "STX Fairburn Report",
-    keywords: "STXFB2:" + toB64({ v: 1, from: who, month: g.month, callouts: mine.map(calloutData) }),
-  });
-  const blob = doc.output("blob");
-  const file = new File([blob], name, { type: "application/pdf" });
-  const payload = { title: name.replace(/\.pdf$/, ""), files: [file] };
-  try {
-    if (navigator.share && navigator.canShare && navigator.canShare(payload)) {
-      navigator.share(payload).then(() => toast("Sent. On their phone: Callout billing › Add callouts › pick the file.")).catch((err) => {
-        if (err && err.name === "AbortError") return;
-        downloadBlob(blob, name);
-      });
-      return;
-    }
-  } catch (err) {}
-  downloadBlob(blob, name);
-  toast("Saved " + name + ". AirDrop or email it to your partner.");
-}
-
-function removeImported(id) {
-  const r = store.reports[id];
-  if (!r || !r.imported) return;
-  delete store.reports[id];
-  store.order = store.order.filter((x) => x !== id);
-  save();
-  toast("Removed. Add the PDF again if you need it back.");
-  render();
-}
-
-function openBillingFile() {
-  if (!billResult) return;
-  const f = billResult.files[0];
-  const url = URL.createObjectURL(f.blob);
-  const w = window.open(url, "_blank");
-  if (!w) { toast("This phone blocked opening it. Use Share billing sheet instead."); return; }
-  recordBillingExport(billResult);
-  setTimeout(() => URL.revokeObjectURL(url), 120000);
-}
-
-async function onBillingFile(e) {
-  const file = (e.target.files || [])[0];
-  e.target.value = "";
-  if (!file) return;
-  try {
-    await saveBillingTemplate(file);
-    billResult = null;
-    toast("Billing sheet saved on this phone.");
-  } catch (err) {
-    toast(String((err && err.message) || "Could not read that file."));
-  }
-  render();
-}
-
-async function prepareBilling(key) {
-  if (billBusy) return;
-  if (!billingTemplateCurrent()) { toast("Load the updated billing sheet first."); return; }
-  const g = allBillingGroups().find((x) => x.key === key);
-  if (!g) { toast("No callout reports for that month."); return; }
-  billBusy = key;
-  billResult = null;
-  render();
-  try {
-    billResult = await buildBillingFiles(g);
-  } catch (err) {
-    toast(String((err && err.message) || "Could not build the billing sheet."));
-  }
-  billBusy = "";
-  render();
-  const btn = document.querySelector('[data-act="billshare"]');
-  if (btn && btn.scrollIntoView) btn.scrollIntoView({ block: "center" });
-}
-
-function saveBillingFiles() {
-  if (!billResult) return;
-  billResult.files.forEach((f) => downloadBlob(f.blob, f.name));
-  recordBillingExport(billResult);
-  toast("Saved " + billResult.files.map((f) => f.name).join(", "));
-  render();
-}
-
-function shareBilling() {
-  if (!billResult) return;
-  const result = billResult;
-  const payload = { title: result.files[0].name.replace(/\.xlsx$/i, ""), files: result.files.map((f) => f.file) };
-  try {
-    if (navigator.share && navigator.canShare && navigator.canShare(payload)) {
-      navigator.share(payload).then(() => {
-        recordBillingExport(result);
-        render();
-      }).catch((err) => {
-        if (err && err.name === "AbortError") return;
-        saveBillingFiles();
-      });
-      return;
-    }
-  } catch (err) {}
-  saveBillingFiles();
 }
 
 function openItems(r) {
@@ -1541,11 +1191,14 @@ function openItems(r) {
     const text = String(a.d || "").trim();
     if (!a.a) out.push({ step: at, label: def.short });
     else if (def.needIf === a.a && !text) out.push({ step: at, label: "Describe: " + def.short });
-    else if (def.kind === "crew" && a.a === "yes" && !String(a.hrs || "").trim()) out.push({ step: at, label: "Hours: " + def.short });
     else if (def.kind === "time" && a.a === "yes" && !a.time && !text) out.push({ step: at, label: "Time: " + def.short });
   };
   DELAYS.forEach((d) => check(d, 1));
   T.crew.forEach((d) => check(d, STEP.CREW));
+  const crew = usedCrew(r);
+  if (!crew.length) out.push({ step: STEP.CREW, label: "Crew" });
+  crew.forEach((x) => { if (!crewNum(x.hours)) out.push({ step: STEP.CREW, label: "Hours: " + crewLabel(x.cls) }); });
+  (r.crew || []).forEach((x) => { if (!x.cls && crewNum(x.hours)) out.push({ step: STEP.CREW, label: "Class for " + x.hours + " hrs" }); });
   T.safety.forEach((d) => check(d, STEP.SAFETY));
   return out;
 }
@@ -1689,24 +1342,13 @@ function bind() {
     patch({ jha: jha });
     render();
   }));
-  document.querySelectorAll("[data-rate]").forEach((b) => b.addEventListener("click", () => {
-    answer(active(), b.getAttribute("data-rate")).rate = b.getAttribute("data-v") === "st" ? "st" : "ot";
+  document.querySelectorAll("[data-crewrate]").forEach((b) => b.addEventListener("click", () => {
+    const row = (active().crew || []).find((x) => x.id === b.getAttribute("data-crewrate"));
+    if (!row) return;
+    row.rate = b.getAttribute("data-v") === "st" ? "st" : "ot";
     patch({});
     render();
   }));
-  document.querySelectorAll("[data-bill]").forEach((b) => b.addEventListener("click", () => prepareBilling(b.getAttribute("data-bill"))));
-  const billFile = document.getElementById("billingFile");
-  if (billFile) billFile.addEventListener("change", onBillingFile);
-  const importFile = document.getElementById("importPdf");
-  if (importFile) importFile.addEventListener("change", onImportPdfs);
-  const zone = document.getElementById("dropZone");
-  if (zone) {
-    zone.addEventListener("dragover", (ev) => { ev.preventDefault(); zone.classList.add("over"); });
-    zone.addEventListener("dragleave", () => zone.classList.remove("over"));
-    zone.addEventListener("drop", onDropFiles);
-  }
-  document.querySelectorAll("[data-bundle]").forEach((b) => b.addEventListener("click", () => shareMonthBundle(b.getAttribute("data-bundle"))));
-  document.querySelectorAll("[data-unimport]").forEach((b) => b.addEventListener("click", () => removeImported(b.getAttribute("data-unimport"))));
   document.querySelectorAll("[data-qf]").forEach((el) => el.addEventListener("input", () => {
     const r = active();
     const id = el.getAttribute("data-qf");
@@ -1735,7 +1377,18 @@ function bind() {
     const key = el.getAttribute("data-row");
     const row = (r[key] || []).find((x) => x.id === el.getAttribute("data-id"));
     if (!row) return;
-    row[el.getAttribute("data-f")] = el.value;
+    const f = el.getAttribute("data-f");
+    row[f] = el.value;
+    if (key === "crew") {
+      /* picking a class starts it at one person */
+      if (f === "cls" && el.value && !String(row.qty || "").trim()) {
+        row.qty = "1";
+        const q = document.getElementById("row-" + row.id + "-qty");
+        if (q) q.value = "1";
+      }
+      const tot = document.getElementById("crewTotal");
+      if (tot) tot.innerHTML = crewTotalText(r);
+    }
     patch({});
   }));
   document.querySelectorAll("[data-add]").forEach((b) => b.addEventListener("click", () => {
@@ -1744,7 +1397,7 @@ function bind() {
     r[key].push(emptyRow[key]());
     patch({});
     render();
-    const boxes = document.querySelectorAll('[data-row="' + key + '"][data-f="' + (key === "equipment" ? "name" : "description") + '"]');
+    const boxes = document.querySelectorAll('[data-row="' + key + '"][data-f="' + (key === "equipment" ? "name" : key === "crew" ? "cls" : "description") + '"]');
     if (boxes.length) boxes[boxes.length - 1].focus();
   }));
   document.querySelectorAll("[data-rm]").forEach((b) => b.addEventListener("click", () => {
@@ -1827,9 +1480,6 @@ function onAct(e) {
     const t = new Date();
     toast("Saved at " + time12(t.getHours() + ":" + z2(t.getMinutes())) + (r && r.status === "draft" ? ". It stays in Drafts until you send it." : "."));
   }
-  if (act === "billing") { askSent = false; screen = "billing"; activeId = null; step = 0; render(); window.scrollTo(0, 0); }
-  if (act === "importpdf") { const el = document.getElementById("importPdf"); if (el) el.click(); }
-  if (act === "billopen") openBillingFile();
   if (act === "back") { step = Math.max(0, step - 1); render(); window.scrollTo(0, 0); }
   if (act === "next") {
     if (!canNext()) return;
@@ -1842,9 +1492,6 @@ function onAct(e) {
     const r = active();
     if (r) { patch({ jha: Object.assign({ front: null, back: null }, r.jha, { on: !(r.jha && r.jha.on) }) }); render(); }
   }
-  if (act === "billfile") { const el = document.getElementById("billingFile"); if (el) el.click(); }
-  if (act === "billshare") shareBilling();
-  if (act === "billsave") saveBillingFiles();
   if (act === "photo") { const el = document.getElementById("photoFile"); if (el) el.click(); }
   if (act === "library") { const el = document.getElementById("libraryFile"); if (el) el.click(); }
   if (act === "clearsig") {
@@ -1909,11 +1556,8 @@ function start(type, fromLast, forceNew) {
       r.printName = last.printName || store.settings.defaultName;
       r.fileWho = last.fileWho || store.settings.fileWho;
       r.recipientEmail = last.recipientEmail || store.settings.defaultEmail;
-      TYPES[type].crew.forEach((def) => {
-        const a = last.q[def.id];
-        if (!a || def.kind !== "crew") return;
-        r.q[def.id] = { a: a.a || "", d: "", name: a.name || "", start: a.start || "", end: a.end || "", hrs: a.hrs || "", hrsTyped: !!a.hrsTyped };
-      });
+      const crew = usedCrew(last);
+      if (crew.length) r.crew = crew.map((x) => ({ ...emptyRow.crew(), cls: x.cls, qty: x.qty, hours: x.hours, rate: x.rate || "" }));
       const gear = usedEquipment(last);
       if (gear.length) r.equipment = gear.map((x) => ({ ...emptyRow.equipment(), name: x.name, qty: x.qty, hours: x.hours }));
     }
@@ -2554,17 +2198,6 @@ function yna(v) { return v === "yes" ? "YES" : v === "no" ? "NO" : v === "na" ? 
 function describe(def, a, type) {
   a = a || {};
   const note = String(a.d || "").trim();
-  if (def.kind === "crew") {
-    const out = [];
-    if (String(a.name || "").trim()) out.push(String(a.name).trim());
-    const span = a.start && a.end ? time12(a.start) + " - " + time12(a.end) : a.start ? "Start " + time12(a.start) : a.end ? "End " + time12(a.end) : "";
-    const h = String(a.hrs || "").trim();
-    const hh = h ? (/[a-z]/i.test(h) ? h : h + " Hrs" + (type === "callout" || type === "tm" ? (rateOf({ type: type }, a) === "st" ? " ST" : " OT") : "")) : "";
-    if (span && hh) out.push(span + " (" + hh + ")");
-    else if (span || hh) out.push(span || hh);
-    if (note) out.push(note);
-    return out.join("\n") || "—";
-  }
   if (def.kind === "time") {
     const out = [];
     if (a.time) out.push(def.timeLabel + ": " + time12(a.time));
@@ -2595,26 +2228,12 @@ function reportText(r) {
     block("Delays", DELAYS),
     ["", "MATERIALS USED"], usedMaterials(r).map((x) => "  • " + x.description + "  qty " + (x.qty || "—") + (x.uom ? " " + x.uom : "")).concat(usedMaterials(r).length ? [] : ["  (none)"]),
     ["", "EQUIPMENT USED"], usedEquipment(r).map((x) => "  • " + x.name + "  qty " + (x.qty || "—") + "  hrs " + (x.hours || "—")).concat(usedEquipment(r).length ? [] : ["  (none)"]),
-    block(T.crewTitle, T.crew), block("Safety checklist", T.safety),
+    T.crew.length ? block(T.crewTitle, T.crew) : [],
+    ["", "CREW AND WORK HOURS"], usedCrew(r).map((x) => "  • " + crewLabel(x.cls) + "  qty " + (x.qty || "1") + "  hrs " + (x.hours || "—") +
+      (hasWO(r) ? " " + rateOf(r, x).toUpperCase() : "") + "  (" + crewHours(x) + " man-hrs)").concat(usedCrew(r).length ? ["  Total: " + crewTotal(r) + " man-hours"] : ["  (none)"]),
+    block("Safety checklist", T.safety),
     ["", r.photosPurged ? "Photos removed from phone after 14 days (sent copy is on file)." : "Photos: " + r.photos.length]
   ).filter((x, i) => x !== "" || i > 5).join("\n");
-}
-
-function calloutData(r) {
-  return {
-    v: 1, id: r.id, type: r.type, date: r.date, projectNumber: r.projectNumber, projectName: r.projectName, calloutNo: r.calloutNo,
-    printName: r.printName, fileWho: r.fileWho, summary: r.summary, q: r.q, equipment: r.equipment, materials: r.materials,
-    createdAt: r.createdAt, updatedAt: r.updatedAt, quoted: !!r.quoted,
-  };
-}
-function toB64(obj) {
-  const bytes = new TextEncoder().encode(JSON.stringify(obj));
-  let bin = "";
-  for (let i = 0; i < bytes.length; i += 8192) bin += String.fromCharCode.apply(null, bytes.subarray(i, i + 8192));
-  return btoa(bin);
-}
-function calloutPayload(r) {
-  return toB64(calloutData(r));
 }
 
 /* jsPDF's built-in fonts only cover Latin-1, so curly quotes and emoji typed on a phone are swapped or dropped. */
@@ -3075,7 +2694,17 @@ async function buildPdfCore(r, caps) {
     usedMaterials(r).map((x) => ({ cells: [x.description, x.qty || "—", x.uom || "—"] })), -1);
   table("Equipment used", ["Equipment", "QTY", "Hours"], [360, 80, 92],
     usedEquipment(r).map((x) => ({ cells: [x.name, x.qty || "—", x.hours || "—"] })), -1);
-  questionTable(T.crewTitle, T.crew);
+  if (T.crew.length) questionTable(T.crewTitle, T.crew);
+  {
+    const crew = usedCrew(r);
+    const wo = hasWO(r);
+    const heads = wo ? ["Class", "Time", "QTY", "Hours each", "Man-hours"] : ["Class", "QTY", "Hours each", "Man-hours"];
+    const widths = wo ? [212, 80, 80, 80, 80] : [292, 80, 80, 80];
+    const rows = crew.map((x) => ({ cells: [crewLabel(x.cls)].concat(wo ? [rateOf(r, x) === "st" ? "Straight time" : "Overtime"] : [],
+      [x.qty || "1", x.hours || "—", String(crewHours(x))]) }));
+    if (rows.length) rows.push({ cells: ["Total"].concat(wo ? [""] : [], ["", "", String(crewTotal(r))]) });
+    table("Crew and work hours", heads, widths, rows, -1);
+  }
   /* the signature never lands on a page by itself: it travels with the safety checklist */
   const blockH = 62;
   questionTable("Safety checklist", T.safety, blockH + 4);
@@ -3213,8 +2842,6 @@ async function buildPdfCore(r, caps) {
     doc.text(pdfText(title), pageW / 2, pageH - 22, { align: "center" });
   }
   const props = { title: pdfText(title), subject: T.title, author: pdfText(r.printName || ""), creator: "STX Fairburn Report" };
-  /* Callout PDFs carry their billing details (no photos or signature) so another phone or the office can add them to the month's billing. */
-  if (hasWO(r)) props.keywords = "STXFB1:" + calloutPayload(r);
   doc.setProperties(props);
   return { blob: doc.output("blob"), reportPages: reportPages, totalPages: totalPages, jhaPages: jhaCount };
 }
@@ -3503,17 +3130,10 @@ function markSent() {
   render();
 }
 
-window.addEventListener("dragover", (ev) => { ev.preventDefault(); });
-window.addEventListener("drop", (ev) => {
-  ev.preventDefault();
-  if (screen === "billing" && !(ev.target && ev.target.closest && ev.target.closest("#dropZone"))) onDropFiles(ev);
-});
 
 async function boot() {
   try {
     await load();
-    /* the office bookmark: .../stx-fairburn-report/#billing opens straight to billing */
-    if (location.hash === "#billing") screen = "billing";
     render();
     loadLogo();
   } catch (err) {

@@ -34,9 +34,11 @@ The app names every PDF in the office filing format and prints the same title in
 
 Both reports: weather, progress summary, delays, **materials used**, **equipment used**, safety checklist, photos, signature.
 
-- Daily adds crew consist and work hours (superintendent, foreman / inspector, operator, laborer).
-- Planned T&M asks the same as the daily report, plus its work order number and an **Already quoted** box.
-- Callout adds the work order number, time the call was received, time arrived onsite, and name / hours for each class.
+- **Crew and work hours** (all three reports): pick a class from the drop-down (Foreman, Operator, Laborer, Superintendent, Project Manager), then QTY (how many) and hours each. Man-hours are QTY x hours, totaled on screen and in the PDF. Add a line for each class. On callouts and planned T&M each line is **Straight time** (T&M default) or **Overtime** (callout default); add a second line for the same class to split them.
+- Planned T&M asks the same as the daily report, plus its work order number and a **Quoted work** box (adds QUOTED WORK to the PDF title).
+- Callout adds the work order number, time the call was received and time arrived onsite.
+- Reports saved before version 8 (Yes / No question per class) convert to crew lines on their own, one person per class.
+- Equipment and materials each have QTY too (equipment: QTY and hours; materials: QTY and unit).
 
 ## Using the app
 
@@ -47,35 +49,6 @@ Both reports: weather, progress summary, delays, **materials used**, **equipment
 - **PDF stays under 2 MB** so it goes through email; photos are scaled back evenly if needed. The last step shows the page count and size.
 - **Weather** tries up to 5 nearby National Weather Service stations when the closest one is down.
 - Last step: **Preview PDF** shows the finished report on screen ("Back to report" returns to it), **Download PDF** keeps a copy, **Share PDF** sends just the PDF (photos are already inside it) to Mail, Messages and so on. Both need the print name and signature.
-
-## Monthly callout billing
-
-Fairburn callouts bill by the month. **Home > Billing** keeps a running billing for each month, and a callout's Send step shows which month it went on.
-
-- **A callout is added to its month as soon as its report is finished**: the PDF is downloaded or shared, or the report is marked sent. Unfinished drafts are listed but left off.
-- **Dropbox / office computer**: open `https://railboss70.github.io/stx-fairburn-report/#billing` (bookmark it) and drag the callout PDFs, or the whole month's folder, from Dropbox onto the drop box. The billing sheet `.xlsx` can be dropped in too the first time. Daily reports and other PDFs in the folder are skipped. On iPhone, tap the box and use Browse › Dropbox.
-- **Between the two Fairburn guys (AirDrop)**: each month on the billing screen has **Share my callouts (AirDrop)**. It makes one small PDF listing that phone's finished callouts for the month, with all their billing details inside. AirDrop it to the partner, who saves it to Files and picks it under **Add callouts**; the whole month is added at once and nothing is added twice. Re-send it any time; only new or changed callouts are added.
-- **Callouts from other people**: every callout PDF carries its billing details (not the photos or signature) in the PDF's keywords. Whoever does the billing saves the PDFs the crew sent to Files and taps **Add callout PDFs**. Each lands on its month, marked "added from PDF", with a Remove button. The same callout is never added twice; a newer copy of it replaces the older one. PDFs from before this version, or PDFs edited or re-saved by another app, can't be read.
-- Each month shows the callout dates, man-hours and equipment hours so far, and its state: **Open** (current month, "Export so far"), **Ready to export** (month is over, "Month complete · export"), or **Exported** with the date. If a callout is added or edited after an export, the month says so and offers "Export updated sheet".
-- After export: **Share billing sheet** (Mail, Save to Files), **Open billing sheet** (shows it on screen with its own share button), or **Download billing sheet**.
-- Export fills the office **TIME AND MATERIALS SUMMARY** billing sheet and names it the office way: `26002_BILLING_SHEET_261005.xlsx` (project, then the export date). The job number is `project-workorder` (`26002-009`), taken from the month's callouts.
-- **The billing sheet is not in this repo, and must not be added to it.** It holds STX billing rates and this repo is public. Each phone loads the `.xlsx` once (Load billing sheet); it is kept in that phone's storage. Any filled copy works: the fill-in cells are overwritten, and rates, formulas, formatting, logo and sheet protection are left as they are. The older 2025 sheet layout is refused with a message to load the updated one.
-- What gets filled: job number, a date and work-detail note per callout day (the progress summary, in capitals like the office sheet), the date and hours on each labor line, equipment hours, and material lines (date, description, quantity, unit).
-- Labor: Project Manager, Inspector (Superintendent / Inspector column), Operator (Utility Operator column), Laborer (Track Laborer column). Callout hours go in the OT column unless the crew row is switched to Straight time.
-- Equipment: each equipment name in the app maps to one sheet column (`EQUIPMENT` in `docs/app.js`). A written-in machine that is not on the rate sheet is flagged and noted in that day's work detail.
-- Left for the office: material unit rates, travel / per diem, lump-sum, other services and adjustments.
-- The sheet has 7 date lines and 10 material lines. A month with more rolls into a second file (`..._261005-2.xlsx`).
-- The export includes the callouts on that phone plus any added from PDFs.
-- If the sheet layout changes (rows or columns move), update `BILLING` at the top of `docs/billing.js` and `EQUIPMENT` in `docs/app.js`.
-
-## Planned T&M billing
-
-- Each planned T&M work order gets **its own billing sheet** with every day of the job on it, under **Billing > Planned T&M jobs**. When the job is done, tap **Job complete · export**.
-- The sheet is named `26002-015_BILLING_SHEET_261016.xlsx` (project-workorder, then the export date); the job number is `26002-015`.
-- Hours default to **straight time**; switch a crew row to OT when needed.
-- Labor: Superintendent > Superintendent / Inspector, Foreman / Inspector > Foreman / Driver, Operator > Utility Operator, Laborer > Track Laborer.
-- **Already quoted** jobs are billed off the quote: they are listed as Quoted and no billing sheet is built.
-- T&M days share between the two phones the same way as callouts (**Share my T&M days (AirDrop)**, or add the PDFs).
 
 ## Page breaks
 
@@ -103,8 +76,8 @@ Static site, no build step. Everything the phone loads is in `docs/`.
 - Questions, project numbers and the site address are constants at the top of `docs/app.js` (`DELAYS`, `SAFETY`, `TYPES`, `SITE`, `EQUIP_PRESETS`, `MATERIAL_UOM`).
 - The PDF layout is `buildPdf()` in `docs/app.js`.
 - The app works offline through `docs/sw.js`, which caches files under a version name. **After any change, bump the version in both places or phones keep the old copy:**
-  - `const CACHE = "stx-fairburn-v7"` in `docs/sw.js` (and the `?v=7` lines in its list)
-  - the `?v=7` on `app.js` and `billing.js` in `docs/index.html`
+  - `const CACHE = "stx-fairburn-v9"` in `docs/sw.js` (and the `?v=9` lines in its list)
+  - the `?v=9` on `app.js` in `docs/index.html`
 
 ## Files
 
@@ -112,9 +85,7 @@ Static site, no build step. Everything the phone loads is in `docs/`.
 | --- | --- |
 | `docs/index.html` | Page shell and styles |
 | `docs/app.js` | The whole app: form, weather, photos, signature, PDF, sharing |
-| `docs/billing.js` | Monthly callout and planned T&M billing: fills and exports the billing sheet |
 | `docs/pdf.min.js`, `docs/pdf.worker.min.js` | pdf.js 3.11.174, draws the PDF preview (same copy as stx-daily-summary) |
-| `docs/jszip.min.js` | JSZip 3.10.1, reads and writes the .xlsx |
 | `docs/sw.js` | Offline cache |
 | `docs/manifest.webmanifest`, `docs/icon-*.png` | Home-screen install name and icon |
 | `docs/jspdf.umd.min.js` | jsPDF 2.5.1, the PDF library (same copy as stx-daily-summary) |
